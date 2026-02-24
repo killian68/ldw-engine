@@ -1,0 +1,150 @@
+<?xml version='1.0' encoding='utf-8'?>
+<book id="tour_brumes" title="La Tour des Brumes" version="1.1" formatVersion="1.0">
+
+  <ruleset name="ff_basic">
+    <dice sides="6" />
+
+    <characterCreation defaultProfile="adventurer">
+      <profile id="adventurer" label="Adventurer (standard)">
+        <roll stat="skill" expr="1d6+6" />
+        <roll stat="stamina" expr="2d6+12" />
+        <roll stat="luck" expr="1d6+6" />
+      </profile>
+
+      <profile id="mage" label="Mage">
+        <roll stat="skill" expr="1d6+4" />
+        <roll stat="stamina" expr="2d6+12" />
+        <roll stat="luck" expr="1d6+6" />
+        <effects>
+          <setFlag key="has_magic" />
+        </effects>
+      </profile>
+    </characterCreation>
+
+    
+    <stats>
+      <stat id="skill" default="10" />
+      <stat id="stamina" default="18" />
+      <stat id="luck" default="9" />
+    </stats>
+  </ruleset>
+
+  <assets basePath="assets/illus/">
+    </assets>
+
+  <start paragraph="1" />
+
+  <paragraphs>
+
+    <paragraph id="1">
+      <text>
+La brume s’élève autour de la vieille tour en ruine.
+On raconte qu’un trésor est caché en son sommet.
+Une porte béante t’invite à entrer.
+      </text>
+
+      <choice target="10">Entrer dans la tour</choice>
+      <choice target="2">Faire le tour du bâtiment</choice>
+
+      </paragraph>
+
+    <paragraph id="2">
+      <text>
+En contournant la tour, tu trouves un vieux puits couvert de mousse.
+Une corde pend à l’intérieur.
+      </text>
+
+      <choice target="3">Descendre dans le puits</choice>
+      <choice target="1">Retourner à l’entrée</choice>
+    </paragraph>
+
+    <paragraph id="3">
+      <text>
+Au fond du puits, tu découvres un coffre dissimulé.
+À l’intérieur : une petite dague d’argent.
+      </text>
+
+      <choice label="Prendre la dague et remonter" target="4">
+        <effects>
+          <addItem text="Dague d'argent" />
+        </effects>
+      </choice>
+    </paragraph>
+
+    <paragraph id="4">
+      <text>
+Tu remontes à la surface avec la dague.
+      </text>
+
+      <choice target="1">Retourner à l’entrée</choice>
+    </paragraph>
+
+    <paragraph id="10">
+      <text>
+L’intérieur de la tour est sombre.
+Un escalier en colimaçon monte vers les étages supérieurs.
+Soudain, un bandit surgit de l’ombre !
+      </text>
+
+      <event type="combat" enemyName="Bandit" enemySkill="8" enemyStamina="10" onWin="20" onLose="900" />
+    </paragraph>
+
+    <paragraph id="20">
+      <text>
+Le bandit gît à terre.
+Un coffre repose près du mur.
+      </text>
+
+      <choice target="30">Ouvrir le coffre</choice>
+      <choice target="1">Quitter la tour</choice>
+    </paragraph>
+
+    <paragraph id="30">
+      <text>
+Le coffre est verrouillé.
+Peut-être pourrais-tu forcer la serrure ?
+      </text>
+
+      <choice target="31">Tenter de forcer le coffre (Test de chance)</choice>
+      <choice target="1">Abandonner et quitter</choice>
+    </paragraph>
+
+    <paragraph id="31">
+      <text>
+Tu tentes ta chance...
+      </text>
+
+      <event type="test" stat="luck" dice="2d6" successGoto="40" failGoto="901" consumeOnSuccess="1" consumeOnFail="1" />
+    </paragraph>
+
+    <paragraph id="40">
+      <text>
+La serrure cède !
+À l’intérieur, une bourse remplie de pièces d’or.
+Tu as réussi !
+      </text>
+    </paragraph>
+
+    <paragraph id="901">
+      <text>
+La serrure résiste. En forçant, tu te blesses légèrement.
+Tu renonces, pour l’instant.
+      </text>
+
+      <choice label="Retourner près du bandit" target="20">
+        <effects>
+          <modifyStat id="stamina" delta="-1" />
+        </effects>
+      </choice>
+      <choice target="1">Quitter la tour</choice>
+    </paragraph>
+
+    <paragraph id="900">
+      <text>
+Tu tombes sous les coups du bandit.
+Ton aventure s’achève ici.
+      </text>
+    </paragraph>
+
+  </paragraphs>
+</book>

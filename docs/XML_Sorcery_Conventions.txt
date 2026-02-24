@@ -1,0 +1,259 @@
+Sorcery-style XML Conventions (PRO)
+===================================
+
+Scope
+-----
+This document defines a clean, reusable XML convention for Sorcery-like books
+(spells, reusable modules, shared combats) using the LDW Engine XML format.
+
+This is a *copyright-safe* guideline:
+- Do NOT include any copyrighted story text, official artwork, or copied book content.
+- Use only original text and your own assets.
+
+Compatibility
+-------------
+These conventions assume:
+- The engine supports:
+  - <ruleset> with <stats>, dice sides
+  - <paragraph> with <text>, <choice>, optional <image ref="...">
+  - <event type="combat"> and <event type="test">
+  - choice effects: addItem/removeItem/setFlag/clearFlag/modifyStat
+  - special navigation targets: "previous" and "return"
+- The UI (app_tk.py) includes PRO navigation:
+  - target="call:<pid>" pushes current paragraph onto return_stack and jumps to <pid>
+  - target="return" pops return_stack and jumps back to the calling paragraph
+  - target="previous" pops history (linear back navigation)
+
+Key Idea
+--------
+Sorcery-like books frequently present "spell lists" at many paragraphs.
+Selecting a spell typically jumps to a spell paragraph that:
+- describes what happens
+- applies effects (cost, flags, injuries, item loss)
+- then instructs the reader to return to the paragraph they came from
+  OR to continue to a specific paragraph (e.g., altered combat).
+
+To model this correctly in the engine, treat spells (and other shared blocks)
+as *modules* that are called from many places and then return to the caller.
+
+Special Targets / Navigation
+----------------------------
+1) target="call:<pid>"
+   - Use to enter a reusable module (spell, table, shared block)
+   - Behavior: pushes current paragraph onto return_stack, then jumps to <pid>
+   - Recommended for Sorcery modules to ensure correct return even if multiple paths
+     lead to the same module.
+
+2) target="return"
+   - Use inside a module to go back to the caller paragraph.
+   - Behavior: pops return_stack and jumps back.
+   - If return_stack is empty, UI falls back to "previous".
+
+3) target="previous"
+   - Linear back navigation using history.
+   - Useful for debugging or generic “go back” behaviors,
+     but NOT recommended as the main Sorcery module return mechanism.
+
+PRO Recommendation:
+- Always use call:/return for modules.
+- Use previous for user convenience/backtracking, not for module semantics.
+
+Module Types and Naming Conventions
+-----------------------------------
+Use consistent paragraph id prefixes to keep XML maintainable.
+
+Narrative paragraphs:
+- Use numeric ids (e.g., "1", "2", "145") if you prefer classic style
+  OR use explicit ids like "P_001", "P_TAVERN", etc.
+- Choose one style and be consistent.
+
+Spells (modules):
+- Prefix: "S_"
+- Examples:
+  - S_FIRE
+  - S_DISARM
+  - S_SHIELD
+
+Generic reusable modules (non-spell):
+- Prefix: "M_"
+- Examples:
+  - M_DICE_HELP
+  - M_TABLE_A
+  - M_RULES_SNIPPET
+
+Shared combats:
+- Prefix: "C_"
+- Use variants explicitly:
+  - C_GIANT_NORMAL
+  - C_GIANT_DISARMED
+  - C_GOBLIN_PACK_1
+
+Flags and Stats Conventions
+---------------------------
+Stats:
+- Keep core FF stats: skill, stamina, luck
+- Add casting resource:
+  - mana (generic), or endurance_magic, or spell_points
+  - Choose a neutral stat id that matches your ruleset.
+
+Effects:
+- Spell cost:
+  - <modifyStat id="mana" delta="-N"/>
+- Injury:
+  - <modifyStat id="stamina" delta="-N"/>
+- World state:
+  - <setFlag key="enemy_disarmed"/>
+  - <setFlag key="spell_failed"/>
+
+Inventory can represent:
+- Known spells (if you want gating):
+  - "Spell:DISARM"
+- Special items:
+  - "Magic Ring"
+Then use <conditions><hasItem .../></conditions> on spell choices.
+
+IMPORTANT: The current engine only supports hasItem conditions (key/text).
+More complex logic can be added later.
+
+UI Behavior Constraint (Events vs Choices)
+------------------------------------------
+In the current UI:
+- If a paragraph contains <event>, the event is executed immediately
+  and choices are not rendered in that paragraph.
+
+Therefore:
+- Do NOT put a combat/test event inside a spell module if you need a "Return" button.
+- Instead:
+  - Spell module paragraph (S_*) applies effects and then goes to a separate paragraph
+    that contains the combat/test event, OR returns to caller.
+
+Pattern Library
+---------------
+A) Spell list in a "magic allowed" paragraph
+--------------------------------------------
+<paragraph id="P_MAGIC_ALLOWED">
+  <text>[original text]</text>
+
+  <!-- call into spell modules -->
+  <choice label="Cast Spell A" target="call:S_A"/>
+  <choice label="Cast Spell B" target="call:S_B"/>
+
+  <!-- narrative continuation -->
+  <choice label="Continue" target="P_NEXT"/>
+</paragraph>
+
+B) Simple spell: apply cost/effect and return to caller
+-------------------------------------------------------
+<paragraph id="S_A">
+  <text>[spell effect text]</text>
+
+  <choice label="Return" target="return">
+    <effects>
+      <modifyStat id="mana" delta="-2"/>
+      <setFlag key="spell_a_cast"/>
+    </effects>
+  </choice>
+</paragraph>
+
+C) Spell fails: penalty and return
+----------------------------------
+<paragraph id="S_A">
+  <text>[spell attempt text]</text>
+
+  <choice label="Spell fails (penalty) — Return" target="return">
+    <effects>
+      <modifyStat id="stamina" delta="-1"/>
+      <setFlag key="spell_failed"/>
+    </effects>
+  </choice>
+</paragraph>
+
+D) Spell changes an encounter: redirect to altered branch
+---------------------------------------------------------
+Example: Disarm enemy -> fight with different stats.
+
+<paragraph id="P_BEFORE_FIGHT">
+  <text>[enemy appears]</text>
+  <choice label="Fight normally" target="C_GIANT_NORMAL"/>
+  <choice label="Cast Disarm" target="call:S_DISARM"/>
+</paragraph>
+
+<paragraph id="S_DISARM">
+  <text>[disarm happens]</text>
+  <choice label="Continue to altered fight" target="C_GIANT_DISARMED">
+    <effects>
+      <modifyStat id="mana" delta="-3"/>
+      <setFlag key="giant_disarmed"/>
+    </effects>
+  </choice>
+
+  <!-- Optional: if player aborts spell -->
+  <choice label="Abort — Return" target="return"/>
+</paragraph>
+
+<paragraph id="C_GIANT_NORMAL">
+  <text>[combat starts]</text>
+  <event type="combat" enemyName="Giant" enemySkill="10" enemyStamina="12"
+         onWin="P_WIN" onLose="P_LOSE"/>
+</paragraph>
+
+<paragraph id="C_GIANT_DISARMED">
+  <text>[combat starts - disarmed]</text>
+  <event type="combat" enemyName="Giant (Disarmed)" enemySkill="8" enemyStamina="12"
+         onWin="P_WIN" onLose="P_LOSE"/>
+</paragraph>
+
+E) Spell requires knowledge/item: gate using hasItem
+----------------------------------------------------
+Store "Spell:DISARM" in inventory (or any agreed format).
+
+<choice label="Cast Disarm" target="call:S_DISARM">
+  <conditions>
+    <hasItem text="Spell:DISARM"/>
+  </conditions>
+</choice>
+
+Optionally provide a fallback choice if not known:
+<choice label="Attempt Disarm (unknown) — it fails" target="call:S_FAIL"/>
+
+F) Nested modules (module calls module)
+---------------------------------------
+Because call:/return uses return_stack, nested calls work naturally.
+
+Example:
+P1 -> call:S_A -> (inside S_A) call:M_TABLE -> return -> back to S_A -> return -> back to P1
+
+Rules:
+- Only use call: when you want a guaranteed "return to caller".
+- Use goto (normal target) to advance the story.
+
+Best Practices
+--------------
+1) Keep modules short and single-purpose.
+2) Spell paragraphs (S_*) should end with:
+   - Return (target="return") OR
+   - explicit continuation target (branch).
+3) Put combat/test events in separate paragraphs (C_* or P_*), not inside modules
+   if you need choice UI.
+4) Use explicit variants for altered combats (C_*_NORMAL, C_*_ALTERED) instead of
+   trying to mutate combat specs dynamically.
+5) Avoid using "previous" for Sorcery semantics; prefer call:/return.
+6) Maintain a consistent id scheme and a dedicated section in the XML for modules
+   (optional but recommended for readability).
+
+Validation Notes
+----------------
+If you run validate.py / reachability checks:
+- call:<pid> is not a real paragraph id. Some validators may flag it as missing.
+- You may need to update validate.py to recognize "call:" targets and treat them as
+  links to the underlying pid.
+
+If you do update validate.py:
+- For every choice target:
+  - if target starts with "call:" -> validate the part after "call:"
+  - if target is "previous" or "return" -> consider it valid without paragraph lookup
+
+End
+---
+This convention enables Sorcery-like spellbooks and shared modules without duplicating
+paragraphs and while preserving correct “return to where you came from” behavior.
