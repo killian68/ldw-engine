@@ -72,9 +72,12 @@ This project contains **engine code only** and an original example book.
 
 Install Pillow if needed:
 
-``` bash
-pip install pillow
-pip install pygame
+## Linux Dependencies
+
+On Debian/Ubuntu:
+
+sudo apt install python3-tk python3-pil.imagetk
+pip install pygame pillow
 ```
 
 ------------------------------------------------------------------------
