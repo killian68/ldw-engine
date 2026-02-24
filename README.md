@@ -74,6 +74,7 @@ Install Pillow if needed:
 
 ``` bash
 pip install pillow
+pip install pygame
 ```
 
 ------------------------------------------------------------------------
