@@ -1,5 +1,5 @@
-<?xml version='1.0' encoding='utf-8'?>
-<book id="tour_brumes" title="La Tour des Brumes" version="1.1" formatVersion="1.0">
+<?xml version="1.0" encoding="utf-8"?>
+<book id="tour_brumes" title="La Tour des Brumes" version="1.2" formatVersion="1.1">
 
   <ruleset name="ff_basic">
     <dice sides="6" />
@@ -21,16 +21,40 @@
       </profile>
     </characterCreation>
 
-    
     <stats>
       <stat id="skill" default="10" />
       <stat id="stamina" default="18" />
       <stat id="luck" default="9" />
     </stats>
+
+    <!-- Declarative tests (v1.1) -->
+    <tests>
+      <test id="luck_test"
+            stat="luck"
+            dice="2d6"
+            successIf="roll&lt;=stat"
+            consume="1" />
+    </tests>
+
+    <!-- Declarative combat profiles (v1.1) -->
+    <combatProfiles>
+      <combat id="ff_classic">
+        <attack dice="2d6" stat="skill" />
+        <tie policy="no_damage" />
+        <damage base="2" />
+        <luck testRef="luck_test">
+          <onPlayerHit successDamage="4" failDamage="1" />
+          <onPlayerHurt successDamage="1" failDamage="3" />
+        </luck>
+        <flee baseDamage="2" luckLike="onPlayerHurt" />
+      </combat>
+    </combatProfiles>
+
   </ruleset>
 
   <assets basePath="assets/illus/">
-    </assets>
+    <!-- no images in this sample -->
+  </assets>
 
   <start paragraph="1" />
 
@@ -45,8 +69,7 @@ Une porte béante t’invite à entrer.
 
       <choice target="10">Entrer dans la tour</choice>
       <choice target="2">Faire le tour du bâtiment</choice>
-
-      </paragraph>
+    </paragraph>
 
     <paragraph id="2">
       <text>
@@ -66,7 +89,7 @@ Au fond du puits, tu découvres un coffre dissimulé.
 
       <choice label="Prendre la dague et remonter" target="4">
         <effects>
-          <addItem text="Dague d'argent" />
+          <addItem text="Dague d&apos;argent" />
         </effects>
       </choice>
     </paragraph>
@@ -86,7 +109,15 @@ Un escalier en colimaçon monte vers les étages supérieurs.
 Soudain, un bandit surgit de l’ombre !
       </text>
 
-      <event type="combat" enemyName="Bandit" enemySkill="8" enemyStamina="10" onWin="20" onLose="900" />
+      <!-- allowFlee="1" to test flee -->
+      <event type="combat"
+             rulesRef="ff_classic"
+             allowFlee="1"
+             enemyName="Bandit"
+             enemySkill="8"
+             enemyStamina="10"
+             onWin="20"
+             onLose="900" />
     </paragraph>
 
     <paragraph id="20">
@@ -114,7 +145,11 @@ Peut-être pourrais-tu forcer la serrure ?
 Tu tentes ta chance...
       </text>
 
-      <event type="test" stat="luck" dice="2d6" successGoto="40" failGoto="901" consumeOnSuccess="1" consumeOnFail="1" />
+      <!-- strict / neutral: testRef only -->
+      <event type="test"
+             testRef="luck_test"
+             successGoto="40"
+             failGoto="901" />
     </paragraph>
 
     <paragraph id="40">

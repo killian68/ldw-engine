@@ -1,105 +1,100 @@
 # Contributing to LDW Engine
 
-Thank you for your interest in contributing to **LDW Engine**.
+Thank you for considering contributing to LDW Engine.
 
-This project is currently maintained as a personal initiative. Contributions are welcome, but the architectural direction is curated to keep the engine lightweight, readable, and legally safe.
+This project follows a strict design philosophy:
 
----
+> The engine must remain neutral.\
+> Game mechanics belong in the XML ruleset.
 
-## Philosophy
+------------------------------------------------------------------------
 
-LDW Engine is designed to be:
+# Core Principles
 
-- Lightweight
-- Explicit over magical
-- XML-driven
-- Deterministic and debuggable
-- Legally clean (no copyrighted book content)
+## 1. Engine Neutrality
 
-Please keep these principles in mind when proposing changes.
+-   Do NOT hardcode specific rule behavior.
+-   All combat logic must be driven by `CombatProfile`.
+-   All tests must be driven by `TestRule`.
+-   Avoid embedding book-specific assumptions.
 
----
+## 2. Backward Compatibility
 
-## Before Contributing
+-   Maintain compatibility with `formatVersion="1.1"` unless explicitly
+    bumping the version.
+-   When adding XML attributes:
+    -   Make them optional
+    -   Update the validator
+    -   Update documentation
 
-1. Open an issue describing:
-   - The problem
-   - The proposed solution
-   - Why it fits the project philosophy
+## 3. XML Validation
 
-2. Wait for feedback before submitting large changes.
+If you introduce new XML features:
 
-Small fixes (typos, minor bugfixes, doc improvements) can be submitted directly.
+-   Add strict validation rules
+-   Fail fast on missing required attributes
+-   Validate cross-references (`rulesRef`, `testRef`)
 
----
+------------------------------------------------------------------------
 
-## Development Guidelines
+# Development Setup
 
-### Code Style
+Requirements:
 
-- Python 3.8+ compatible
-- Clear, explicit code over clever shortcuts
-- Avoid unnecessary dependencies
-- Keep engine logic separate from UI logic
+-   Python 3.8+
+-   Tkinter
+-   Pillow (optional)
 
-### Structure Rules
+Run locally:
 
-- `engine/` must remain UI-independent
-- `ui/` must not embed core rules logic
-- `examples/` must only contain original, non-copyrighted content
-- `docs/` contains documentation only
+    python main.py
 
-Do not mix responsibilities between these layers.
+------------------------------------------------------------------------
 
----
+# Code Guidelines
 
-## XML Format Changes
+-   Keep modules small and focused.
+-   Avoid circular dependencies.
+-   Use dataclasses for data models.
+-   Keep UI logic separate from engine logic.
+-   Add comments for non-obvious mechanics.
 
-If modifying the XML specification:
+------------------------------------------------------------------------
 
-- Update validation rules (`engine/validate.py`)
-- Update loader (`engine/book_loader.py`)
-- Update documentation (`README.md` and `docs/`)
-- Preserve backward compatibility when possible
-
-Any breaking change must bump `formatVersion`.
-
----
-
-## Legal Notice
-
-Do NOT submit:
-
-- Text copied from commercial gamebooks
-- Scanned illustrations
-- OCR extracts of copyrighted works
-
-This repository must remain legally distributable.
-
----
-
-## Pull Request Checklist
+# Pull Request Guidelines
 
 Before submitting a PR:
 
-- [ ] Code runs without errors
-- [ ] Validation still works
-- [ ] No UI-engine coupling introduced
-- [ ] Documentation updated if needed
-- [ ] No copyrighted material included
+-   Ensure XML validation passes.
+-   Ensure no rule logic is hardcoded.
+-   Update README if format changes.
+-   Keep changes focused and atomic.
 
----
+------------------------------------------------------------------------
 
-## Maintainer Notes
+# Reporting Issues
 
-The maintainer reserves the right to:
+When reporting a bug, include:
 
-- Reject changes that complicate the engine unnecessarily
-- Refactor submitted code before merging
-- Prioritize architectural coherence over feature expansion
+-   Python version
+-   OS
+-   formatVersion used
+-   Minimal XML example reproducing the issue
 
----
+------------------------------------------------------------------------
 
-## License
+# Roadmap Alignment
 
-By contributing, you agree that your contributions will be licensed under the MIT License used by this project.
+Major features should align with:
+
+-   Declarative expansion
+-   Validation improvements
+-   Engine neutrality
+-   Testing coverage
+
+------------------------------------------------------------------------
+
+# License
+
+By contributing, you agree that your contributions will be licensed
+under the MIT License.

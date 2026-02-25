@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<book id="template_ff" title="Template — FF-like" version="1.2" formatVersion="1.1">
+
+  <!--
+    FF-like baseline (Défis Fantastiques classic):
+      - 2d6 combat
+      - 2d6 tests against a stat (Luck, Skill, etc.)
+      - Core stats: skill, stamina, luck
+
+    This template contains NO copyrighted story content.
+
+    formatVersion 1.1 adds:
+      - declarative tests (e.g. luck_test)
+      - declarative combat profile (ff_classic)
+      - strict event references:
+          * test events use testRef ONLY (no stat/dice/consume in event)
+          * combat events use rulesRef (and allowFlee per event)
+  -->
+
+  <ruleset name="ff_basic">
+    <dice sides="6"/>
+
+    <characterCreation defaultProfile="adventurer">
+      <profile id="adventurer" label="Adventurer">
+        <!-- Backward-compatible profile format -->
+        <stat id="skill"   roll="1d6+6"/>
+        <stat id="stamina" roll="2d6+12"/>
+        <stat id="luck"    roll="1d6+6"/>
+      </profile>
+    </characterCreation>
+
+    <!-- Stat defaults can stay as fallback, but may be 0 -->
+    <stats>
+      <stat id="skill" default="0"/>
+      <stat id="stamina" default="0"/>
+      <stat id="luck" default="0"/>
+    </stats>
+
+    <!-- =========================
+         Declarative tests (v1.1)
+         ========================= -->
+    <tests>
+      <!-- Défi Fantastique: "Testez votre chance" -->
+      <test id="luck_test"
+            stat="luck"
+            dice="2d6"
+            successIf="roll&lt;=stat"
+            consume="1" />
+
+      <!-- Optional example:
+      <test id="skill_test"
+            stat="skill"
+            dice="2d6"
+            successIf="roll&lt;=stat"
+            consume="0" />
+      -->
+    </tests>
+
+    <!-- =========================
+         Declarative combat profiles (v1.1)
+         ========================= -->
+    <combatProfiles>
+      <combat id="ff_classic">
+        <attack dice="2d6" stat="skill" />
+        <tie policy="no_damage" />
+        <damage base="2" />
+
+        <luck testRef="luck_test">
+          <onPlayerHit successDamage="4" failDamage="1" />
+          <onPlayerHurt successDamage="1" failDamage="3" />
+        </luck>
+
+        <flee baseDamage="2" luckLike="onPlayerHurt" />
+      </combat>
+    </combatProfiles>
+
+  </ruleset>
+
+  <assets basePath="assets/illus/">
+    <!-- <image id="cover" file="cover.png" /> -->
+  </assets>
+
+  <start paragraph="1" />
+
+  <paragraphs>
+
+    <paragraph id="1">
+      <text>
+[Template paragraph]
+Write original text here.
+      </text>
+
+      <choice target="2">Go to paragraph 2</choice>
+      <choice target="3">Go to paragraph 3</choice>
+    </paragraph>
+
+    <paragraph id="2">
+      <text>
+[Combat template]
+Encounter begins.
+      </text>
+
+      <event type="combat"
+             rulesRef="ff_classic"
+             allowFlee="1"
+             enemyName="Enemy"
+             enemySkill="6"
+             enemyStamina="6"
+             onWin="4"
+             onLose="5" />
+    </paragraph>
+
+    <paragraph id="3">
+      <text>
+[Test template]
+Perform a stat test.
+      </text>
+
+      <!-- STRICT: testRef only (stat/dice/consume come from ruleset.tests) -->
+      <event type="test"
+             testRef="luck_test"
+             successGoto="4"
+             failGoto="5" />
+    </paragraph>
+
+    <paragraph id="4">
+      <text>
+[Success template]
+      </text>
+
+      <choice label="Continue" target="6">
+        <effects>
+          <addItem text="Example item" />
+          <setFlag key="did_succeed" />
+        </effects>
+      </choice>
+    </paragraph>
+
+    <paragraph id="5">
+      <text>
+[Failure template]
+      </text>
+
+      <choice label="Continue" target="6">
+        <effects>
+          <modifyStat id="stamina" delta="-1" />
+          <setFlag key="did_fail" />
+        </effects>
+      </choice>
+    </paragraph>
+
+    <paragraph id="6">
+      <text>
+[Hub / end template]
+      </text>
+
+      <choice target="previous">Go back (previous)</choice>
+    </paragraph>
+
+  </paragraphs>
+</book>

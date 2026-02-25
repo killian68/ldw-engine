@@ -11,9 +11,12 @@ from engine.book_loader import load_book, resolve_image_path
 from engine.models import GameState, Book, Paragraph, Choice, CombatSpec, TestSpec, CharacterProfile
 from engine.rules import is_choice_available, apply_choice_effects, clamp_stats_non_negative
 from engine.combat import CombatSession
+from engine.tests import resolve_test_rule, run_test_with_roll, roll_expr as test_roll_expr
+
 from ui.image_viewer import ImagePanel
 from ui.dice_widget import DiceRoller
 from ui.sfx import play_wav
+from engine.validator import validate_book
 
 
 DEFAULT_BOOK_PATH = os.path.join(os.path.dirname(__file__), "..", "examples", "sample_book.xml")
@@ -240,6 +243,11 @@ class App(tk.Tk):
     def load_book(self, xml_path: str) -> None:
         try:
             book = load_book(xml_path)
+
+            # ✅ XML/ruleset validation (strict mode by default)
+            # Use strict=False if you prefer warnings-only behavior.
+            validate_book(book, strict=True)
+
         except Exception as e:
             messagebox.showerror("Load error", str(e))
             return
@@ -802,23 +810,50 @@ class App(tk.Tk):
     # ---------- Combat ----------
 
     def _run_combat(self, spec: CombatSpec) -> bool:
-        if not self.state:
+        if not self.state or not self.book:
             return False
 
-        session = CombatSession(self.state, spec, self.rng)
+        session = CombatSession(self.state, spec, self.rng, ruleset=self.book.ruleset)
 
         top = tk.Toplevel(self)
         top.title("Combat")
-        top.geometry("860x620")
-        top.minsize(700, 500)
+        top.geometry("900x660")
+        top.minsize(700, 520)
 
         root = ttk.Frame(top)
         root.pack(fill="both", expand=True)
         root.columnconfigure(0, weight=1)
-        root.rowconfigure(1, weight=1)
+        root.rowconfigure(2, weight=1)
 
+        # --- Options row (Luck / Flee) ---
+        options_row = ttk.Frame(root)
+        options_row.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
+        options_row.columnconfigure(0, weight=1)
+        options_row.columnconfigure(1, weight=1)
+
+        use_luck_var = tk.BooleanVar(value=False)
+
+        luck_supported = getattr(session.profile, "luck", None) is not None
+        flee_supported = getattr(session.profile, "flee", None) is not None
+        flee_allowed = bool(getattr(spec, "allow_flee", False))
+
+        luck_cb = ttk.Checkbutton(
+            options_row,
+            text="Use Luck (Test your Luck) when applicable",
+            variable=use_luck_var
+        )
+        luck_cb.grid(row=0, column=0, sticky="w")
+        if not luck_supported:
+            luck_cb.state(["disabled"])
+
+        flee_btn = ttk.Button(options_row, text="Flee", state="disabled")
+        flee_btn.grid(row=0, column=1, sticky="e")
+        if flee_supported and flee_allowed:
+            flee_btn.config(state="normal")
+
+        # --- Dice row ---
         dice_row = ttk.Frame(root)
-        dice_row.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
+        dice_row.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
         dice_row.columnconfigure(0, weight=1)
         dice_row.columnconfigure(1, weight=1)
 
@@ -832,8 +867,9 @@ class App(tk.Tk):
         dice_player.pack(padx=6, pady=6)
         dice_enemy.pack(padx=6, pady=6)
 
+        # --- Log text ---
         txt_frame = ttk.Frame(root)
-        txt_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 6))
+        txt_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 6))
         txt_frame.columnconfigure(0, weight=1)
         txt_frame.rowconfigure(0, weight=1)
 
@@ -847,8 +883,9 @@ class App(tk.Tk):
         txt.insert("end", "\n".join(session.start_log()) + "\n")
         txt.see("end")
 
+        # --- Buttons ---
         btn_bar = ttk.Frame(root)
-        btn_bar.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
+        btn_bar.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 10))
         btn_bar.columnconfigure(0, weight=1)
 
         roll_btn = ttk.Button(btn_bar, text="Roll next round")
@@ -876,7 +913,7 @@ class App(tk.Tk):
 
             def maybe_continue():
                 if results["p"] and results["e"]:
-                    logs = session.roll_round()
+                    logs = session.roll_round(use_luck=bool(use_luck_var.get()))
                     if logs:
                         txt.insert("end", "\n".join(logs) + "\n")
                         txt.see("end")
@@ -908,25 +945,51 @@ class App(tk.Tk):
             dice_player.animate_and_lock(self.rng, on_done=done_player)
             dice_enemy.animate_and_lock(self.rng, on_done=done_enemy)
 
+        def do_flee():
+            if session.finished:
+                return
+            _sfx_warn_if_missing(txt)
+            play_wav(SFX_ROLL)
+
+            logs = session.flee(use_luck=bool(use_luck_var.get()))
+            if logs:
+                txt.insert("end", "\n".join(logs) + "\n")
+                txt.see("end")
+
+            self._clamp_core()
+            self._sync_stats_to_ui()
+
+            continue_btn.config(state="normal")
+            roll_btn.config(state="disabled")
+
+        flee_btn.config(command=do_flee)
+        roll_btn.config(command=roll_round)
+
         def finish():
             top.destroy()
             next_pid = spec.on_win_goto if session.won else spec.on_lose_goto
             self._sync_stats_to_ui()
             self._goto(next_pid, push_history=True)
 
-        roll_btn.config(command=roll_round)
         continue_btn.config(command=finish)
 
         return True
 
-    # ---------- Test ----------
+    # ---------- Test (ruleset-driven) ----------
 
     def _run_test(self, spec: TestSpec) -> bool:
-        if not self.state:
+        if not self.state or not self.book:
             return False
 
+        ruleset = self.book.ruleset
+        rule = resolve_test_rule(ruleset, getattr(spec, "test_ref", None))
+
+        # Dice/stat come from rule first, fallback to spec (strict books will usually be rule-driven)
+        dice_expr = (rule.dice if rule and rule.dice else (spec.dice or "2d6")).strip()
+        stat_id = (rule.stat if rule and rule.stat else spec.stat_id).strip()
+
         top = tk.Toplevel(self)
-        top.title(f"Test: {spec.stat_id}")
+        top.title(f"Test: {stat_id}")
         top.geometry("760x520")
         top.minsize(520, 360)
 
@@ -967,29 +1030,27 @@ class App(tk.Tk):
 
         top.protocol("WM_DELETE_WINDOW", _close_as_fail)
 
-        stat_val = int(self.state.stats.get(spec.stat_id, 0))
-        txt.insert("end", f"Testing {spec.stat_id.upper()} ({stat_val})\n")
-        txt.insert("end", f"Roll: {spec.dice}\n\n")
+        stat_val = int(self.state.stats.get(stat_id, 0))
+        txt.insert("end", f"Testing {stat_id.upper()} ({stat_val})\n")
+        txt.insert("end", f"Roll: {dice_expr}\n\n")
         txt.insert("end", "Click 'Roll' to throw the dice.\n\n")
         txt.see("end")
 
-        def _apply_test_result(total: int):
-            current_stat = int(self.state.stats.get(spec.stat_id, 0))
-            success = total <= current_stat
-
+        def _apply_outcome(outcome) -> None:
             result["done"] = True
-            result["success"] = success
+            result["success"] = bool(outcome.success)
 
-            txt.insert("end", f"You rolled {total} against {current_stat} -> ")
-            txt.insert("end", "SUCCESS\n" if success else "FAILURE\n")
+            txt.insert("end", f"You rolled {outcome.roll_total} against {outcome.stat_before} -> ")
+            txt.insert("end", "SUCCESS\n" if outcome.success else "FAILURE\n")
 
-            consume = spec.consume_on_success if success else spec.consume_on_fail
-            if consume:
-                self.state.stats[spec.stat_id] = int(self.state.stats.get(spec.stat_id, 0)) - int(consume)
-                self._clamp_core()
-                txt.insert("end", f"{spec.stat_id.upper()} decreases by {consume}. Now: {self.state.stats.get(spec.stat_id, 0)}\n")
+            if outcome.consumed:
+                txt.insert(
+                    "end",
+                    f"{outcome.stat_id.upper()} decreases by {outcome.consumed}. Now: {outcome.stat_after}\n"
+                )
 
             txt.see("end")
+            self._clamp_core()
             self._sync_stats_to_ui()
             continue_btn.config(state="normal")
 
@@ -998,21 +1059,42 @@ class App(tk.Tk):
                 return
 
             _sfx_warn_if_missing(txt)
-
-            if spec.dice.strip().lower() != "2d6":
-                play_wav(SFX_ROLL)
-                total = roll_expr(spec.dice, self.rng)
-                _apply_test_result(total)
-                roll_btn.config(state="disabled")
-                return
-
             play_wav(SFX_ROLL)
             roll_btn.config(state="disabled")
 
-            def after_roll(total: int):
-                _apply_test_result(total)
+            # 2d6 -> animate, then apply pre-rolled total (NO double-roll)
+            if dice_expr.lower() == "2d6":
+                def after_roll(total: int):
+                    outcome = run_test_with_roll(
+                        self.state,
+                        ruleset=ruleset,
+                        test_ref=getattr(spec, "test_ref", None),
+                        stat_id=stat_id,
+                        success_if="roll<=stat",
+                        consume_on_success=spec.consume_on_success,
+                        consume_on_fail=spec.consume_on_fail,
+                        roll_total=int(total),
+                        roll_detail=(),
+                    )
+                    _apply_outcome(outcome)
 
-            dice_widget.animate_and_lock(self.rng, on_done=after_roll)
+                dice_widget.animate_and_lock(self.rng, on_done=after_roll)
+                return
+
+            # Other dice (NdM±K) -> roll in engine.tests (supports offset), no animation
+            total, detail = test_roll_expr(dice_expr, self.rng)
+            outcome = run_test_with_roll(
+                self.state,
+                ruleset=ruleset,
+                test_ref=getattr(spec, "test_ref", None),
+                stat_id=stat_id,
+                success_if="roll<=stat",
+                consume_on_success=spec.consume_on_success,
+                consume_on_fail=spec.consume_on_fail,
+                roll_total=int(total),
+                roll_detail=tuple(int(x) for x in detail),
+            )
+            _apply_outcome(outcome)
 
         def finish():
             if not result["done"]:

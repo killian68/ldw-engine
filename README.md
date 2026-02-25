@@ -1,219 +1,138 @@
 # LDW Engine
 
-LDW Engine is a lightweight Python engine for playing and authoring
+![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Format](https://img.shields.io/badge/XML-formatVersion%201.1-orange)
+![Status](https://img.shields.io/badge/status-active-brightgreen)
+
+LDW Engine is an open-source Python engine for playing and authoring
 paragraph-based interactive gamebooks (Fighting Fantasy--style).
 
-It provides:
+The core philosophy is simple:
 
--   A clean XML-based book format (`formatVersion="1.0"`)
--   A reusable engine (rules, combat, tests, navigation stacks)
--   A Tkinter desktop UI with dice animation and sound effects
--   Character creation with multi-profile support
--   Save / Load support with persistent max stats
-
-This project contains **engine code only** and an original example book.
+> The engine stays neutral.\
+> The rules live in the XML ruleset.
 
 ------------------------------------------------------------------------
 
-# Features
+# ✨ Key Features
 
-## Core Engine
+## Engine Core
 
--   Paragraph navigation system\
+-   Paragraph navigation system
 
--   Choice conditions and effects\
+-   Choice conditions & effects
 
--   Inventory and flags\
+-   Inventory + flags
 
--   Stat system with:
-
-    -   Current values
-    -   Base (initial / max) values\
+-   Current stats + base (max) stats
 
 -   Centralized stat clamping:
 
         0 <= current_stat <= base_stat
 
-------------------------------------------------------------------------
+## Declarative Rules (formatVersion 1.1)
 
-## Events
-
--   Combat (Fighting Fantasy--style)
--   Generic stat tests (e.g., Luck test)
-
-------------------------------------------------------------------------
+-   `<tests>` definitions (Luck tests, Skill tests, etc.)
+-   `<combatProfiles>` definitions
+-   `rulesRef` & `testRef` bindings
+-   Optional `allowFlee` per combat event
+-   Luck mappings fully ruleset-driven
 
 ## Character Creation
 
 -   Multiple profiles (classes)
--   Dice expressions (`NdM±K`, e.g., `1d6+6`, `2d6+12`)
--   Optional initial effects (flags, items, stat modifiers)
+-   Dice expressions: `NdM`, `NdM+K`, `NdM-K`
+-   Initial effects (flags, items, stat modifiers)
 
-------------------------------------------------------------------------
+## UI (Tkinter Desktop)
 
-## UI (Tkinter)
-
--   Dice animation widget
--   Sound effects (roll / hit / tie)
+-   Animated dice widget
+-   Sound effects
 -   Image panel
--   Save / Load
--   Navigation stacks:
+-   Save/Load system
+-   Navigation stack:
     -   `previous`
     -   `return`
-    -   `call:<paragraph_id>` module calls
+    -   `call:<pid>`
 
 ------------------------------------------------------------------------
 
-# Requirements
+# 🏗 Architecture Overview
 
--   Python 3.8+
--   Tkinter (usually included with Python)
--   Pillow (optional, for image resizing support)
+LDW Engine is layered:
 
-Install Pillow if needed:
+    Book XML
+       │
+       ▼
+    Book Loader (validation + parsing)
+       │
+       ▼
+    Engine Models (Ruleset, CombatProfile, TestRule, etc.)
+       │
+       ▼
+    Runtime State (GameState)
+       │
+       ▼
+    UI Layer (Tkinter)
 
-## Linux Dependencies
+## Design Principle
 
-On Debian/Ubuntu:
-
-sudo apt install python3-tk python3-pil.imagetk
-pip install pygame pillow
-```
-
-------------------------------------------------------------------------
-
-# Running the Engine
-
-From the project root:
-
-``` bash
-python main.py
-```
-
-By default, it loads:
-
-    examples/sample_book.xml
-
-You can load other books via the **File → Open** menu.
+-   No hardcoded game mechanics
+-   Combat logic is driven by `CombatProfile`
+-   Tests are driven by `TestRule`
+-   XML is validated before runtime use
 
 ------------------------------------------------------------------------
 
-# XML Book Format (v1.0)
+# 📄 XML Format (formatVersion="1.1")
 
-Each book must declare:
+Books must declare:
 
 ``` xml
-<book id="..." title="..." version="..." formatVersion="1.0">
+<book id="..." title="..." version="..." formatVersion="1.1">
 ```
-
-## Structure Overview
-
-``` xml
-<book>
-  <ruleset>...</ruleset>
-  <assets>...</assets>
-  <start paragraph="1" />
-  <paragraphs>
-    <paragraph id="1">...</paragraph>
-  </paragraphs>
-</book>
-```
-
-------------------------------------------------------------------------
 
 ## Ruleset
 
 ``` xml
 <ruleset name="ff_basic">
-  <dice sides="6" />
-  <characterCreation>...</characterCreation>
-  <stats>...</stats>
+  <dice sides="6"/>
+  <tests>...</tests>
+  <combatProfiles>...</combatProfiles>
 </ruleset>
 ```
 
-------------------------------------------------------------------------
-
-## Character Creation
+## Declarative Test Example
 
 ``` xml
-<characterCreation defaultProfile="adventurer">
-  <profile id="adventurer" label="Adventurer">
-    <roll stat="skill" expr="1d6+6" />
-    <roll stat="stamina" expr="2d6+12" />
-    <roll stat="luck" expr="1d6+6" />
-  </profile>
-</characterCreation>
+<test id="luck_test"
+      stat="luck"
+      dice="2d6"
+      successIf="roll<=stat"
+      consume="1" />
 ```
 
-### Supported dice expressions
-
--   `NdM`
--   `NdM+K`
--   `NdM-K`
-
-Examples:
-
--   `1d6+6`
--   `2d6+12`
--   `2d6`
-
-When a character is created:
-
--   `state.stats[stat]` is set to the rolled value\
--   `state.base_stats[stat]` is set to the same value (max reference)
-
-------------------------------------------------------------------------
-
-## Paragraph
+## Declarative Combat Example
 
 ``` xml
-<paragraph id="10">
-  <text>Story text...</text>
-  <image ref="p1" />
-  <choice target="20">Continue</choice>
-  <event type="combat" ... />
-</paragraph>
+<combat id="ff_classic">
+  <attack dice="2d6" stat="skill" />
+  <damage base="2" />
+  <luck testRef="luck_test">
+    <onPlayerHit successDamage="4" failDamage="1" />
+    <onPlayerHurt successDamage="1" failDamage="3" />
+  </luck>
+  <flee baseDamage="2" luckLike="onPlayerHurt" />
+</combat>
 ```
 
-------------------------------------------------------------------------
-
-## Choices
-
-Basic choice:
-
-``` xml
-<choice target="20">Continue</choice>
-```
-
-With conditions and effects:
-
-``` xml
-<choice target="4">
-  <conditions>
-    <hasItem text="Rope" />
-  </conditions>
-  <effects>
-    <addItem text="Silver Dagger" />
-    <modifyStat id="stamina" delta="-1" />
-    <setFlag key="has_magic" />
-  </effects>
-</choice>
-```
-
-------------------------------------------------------------------------
-
-## Special Targets
-
--   `previous` --- go back in navigation history\
--   `return` --- return from module (return stack)\
--   `call:<pid>` --- module call (push return stack)
-
-------------------------------------------------------------------------
-
-## Combat Event (Compact Form)
+## Event Binding
 
 ``` xml
 <event type="combat"
+       rulesRef="ff_classic"
+       allowFlee="1"
        enemyName="Bandit"
        enemySkill="8"
        enemyStamina="10"
@@ -223,70 +142,94 @@ With conditions and effects:
 
 ------------------------------------------------------------------------
 
-## Test Event
+# 💾 Save System
 
-``` xml
-<event type="test"
-       stat="luck"
-       dice="2d6"
-       successGoto="40"
-       failGoto="901"
-       consumeOnSuccess="1"
-       consumeOnFail="1" />
-```
-
-### Test Rule
-
-1.  Roll dice\
-2.  Success if total ≤ current stat\
-3.  Apply stat consumption\
-4.  Clamp automatically applied
-
-------------------------------------------------------------------------
-
-# Save System
-
-Save files store:
+Save files persist:
 
 -   Current paragraph
 -   Current stats
--   Base (initial/max) stats
+-   Base stats
 -   Inventory
 -   Flags
--   Navigation history
+-   History stack
 -   Return stack
 
-This ensures a full restoration of game state.
+Save versioning allows forward compatibility handling.
 
 ------------------------------------------------------------------------
 
-# Legal Notice
+# 🔎 Strict XML Validation
+
+Recommended workflow:
+
+1.  Validate XML before loading
+2.  Fail fast on structural errors
+3.  Ensure referenced `rulesRef` and `testRef` exist
+
+The project includes a validator module for strict checking.
+
+------------------------------------------------------------------------
+
+# 🚀 Running the Engine
+
+Requirements:
+
+-   Python 3.8+
+-   Tkinter
+-   Pillow (optional)
+
+Linux:
+
+    sudo apt install python3-tk python3-pil.imagetk
+    pip install pillow
+
+Run:
+
+    python main.py
+
+------------------------------------------------------------------------
+
+# 🤝 Contributing
+
+Contributions are welcome.
+
+Guidelines:
+
+-   Keep engine neutral
+-   Never hardcode specific ruleset behavior
+-   Maintain XML backward compatibility
+-   Update validation when adding attributes
+-   Update documentation when formatVersion changes
+
+------------------------------------------------------------------------
+
+# 🛣 Roadmap
+
+-   XML Schema (XSD)
+-   CLI validation tool
+-   Headless engine mode
+-   Web frontend
+-   Additional ruleset templates
+-   Automated tests (pytest)
+
+------------------------------------------------------------------------
+
+# ⚖ Legal Notice
 
 This repository provides:
 
--   A generic gamebook engine\
--   An XML authoring format\
+-   A generic gamebook engine
+-   An XML authoring format
 -   An original example book
 
-It does **not** include:
+It does not include copyrighted commercial content.
 
--   Story text from published commercial gamebooks\
--   Illustrations from published books\
--   Scans, PDFs, or OCR extracts\
--   Copyrighted content owned by third-party publishers or authors
-
-Users are responsible for ensuring they have the legal right to any
-content they load into this engine.
+Users are responsible for ensuring legal rights to loaded content.
 
 ------------------------------------------------------------------------
 
-# Copyright
+# 📜 License
+
+MIT License
 
 Copyright (c) 2026 Laurent Cachia
-
-------------------------------------------------------------------------
-
-# License
-
-This project is licensed under the MIT License.\
-See the `LICENSE` file for details.

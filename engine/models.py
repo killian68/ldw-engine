@@ -26,12 +26,76 @@ class CharacterCreationSpec:
     profiles: List["CharacterProfile"] = field(default_factory=list)
 
 
+# -------------------------
+# Declarative rules (data-only)
+# -------------------------
+
+@dataclass
+class TestRule:
+    """
+    Declarative stat test rule (data-only).
+    Example: luck_test: roll 2d6 <= luck, consume 1 luck
+    """
+    test_id: str
+    stat: str
+    dice: str = "2d6"
+    success_if: str = "roll<=stat"
+    consume: int = 0
+
+
+@dataclass
+class LuckRule:
+    """
+    Luck mapping for combat outcomes (data-only).
+    """
+    test_ref: str = "luck_test"
+    on_player_hit_success_damage: int = 4
+    on_player_hit_fail_damage: int = 1
+    on_player_hurt_success_damage: int = 1
+    on_player_hurt_fail_damage: int = 3
+
+
+@dataclass
+class FleeRule:
+    """
+    Flee rule (data-only).
+    """
+    base_damage: int = 2
+    luck_like: str = "onPlayerHurt"  # semantic mapping name
+
+
+@dataclass
+class CombatProfile:
+    """
+    Declarative combat profile (data-only).
+    Defaults match classic FF:
+      - attack: 2d6 + skill
+      - damage: 2
+      - tie: no damage
+      - optional luck and flee rules
+    """
+    combat_id: str
+
+    attack_dice: str = "2d6"
+    attack_stat: str = "skill"
+
+    tie_policy: str = "no_damage"
+    base_damage: int = 2
+
+    luck: Optional[LuckRule] = None
+    flee: Optional[FleeRule] = None
+
+
 @dataclass
 class Ruleset:
     name: str = "basic"
     dice_sides: int = 6
     stat_defaults: Dict[str, int] = field(default_factory=dict)  # fallback values
     character_creation: Optional[CharacterCreationSpec] = None   # optional profiles/rolls
+
+    # Declarative rules declared in the book's ruleset (formatVersion >= 1.1)
+    tests: Dict[str, TestRule] = field(default_factory=dict)
+    combat_profiles: Dict[str, CombatProfile] = field(default_factory=dict)
 
 
 @dataclass
@@ -88,21 +152,31 @@ class CombatSpec:
     on_win_goto: str
     on_lose_goto: str
 
+    # Optional ref to a declarative combat profile in Ruleset
+    rules_ref: Optional[str] = None
+
+    # NEW: allow flee per-event (XML allowFlee="0/1", "true/false", etc. parsed in loader)
+    allow_flee: bool = False
+
 
 @dataclass
 class TestSpec:
     """
-    Generic stat test (FF-friendly):
-      - roll dice expression (default 2d6)
-      - compare roll <= stat
-      - optionally consume stat points (e.g. Luck decreases after test)
+    Generic stat test (ruleset-driven in strict mode).
+
+    In strict mode:
+      - stat_id may be empty and resolved from test_ref
+      - dice/consume fields are ignored if test_ref exists
     """
-    stat_id: str
+    stat_id: str = ""   # <-- now optional / may be resolved from test_ref
     dice: str = "2d6"
     success_goto: str = ""
     fail_goto: str = ""
     consume_on_success: int = 0
     consume_on_fail: int = 0
+
+    # Reference to declarative test rule in Ruleset (recommended in strict mode)
+    test_ref: Optional[str] = None
 
 
 @dataclass
