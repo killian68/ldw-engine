@@ -1,4 +1,4 @@
-# LDW Engine
+# LDW Engine v 1.2.0
 
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
