@@ -4,7 +4,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Format](https://img.shields.io/badge/XML-formatVersion%201.1-orange)
 ![Status](https://img.shields.io/badge/status-active-brightgreen)
-![Version](https://img.shields.io/badge/version-1.2.0-blue)
+![GitHub release](https://img.shields.io/github/v/release/killian68/ldw-engine)
 
 LDW Engine is an open-source Python engine for playing and authoring
 paragraph-based interactive gamebooks (Fighting Fantasy--style).
