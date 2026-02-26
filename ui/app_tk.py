@@ -23,6 +23,7 @@ from ui.image_viewer import ImagePanel
 from ui.dice_widget import DiceRoller
 from ui.sfx import play_wav
 from engine.validator import validate_book
+from ui.icon import patch_toplevel_icon
 
 
 # Repo layout:
@@ -1273,4 +1274,8 @@ class App(tk.Tk):
 
 def run_app() -> None:
     app = App()
+
+    # Inject global icon (root + all future Toplevel)
+    patch_toplevel_icon(app)
+
     app.mainloop()
