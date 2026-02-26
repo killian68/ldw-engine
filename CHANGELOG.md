@@ -1,9 +1,41 @@
 # Changelog
 
-All notable changes to LDW Engine will be documented in this file.
+All notable changes to this project will be documented in this file.
 
-The format is inspired by Keep a Changelog and follows semantic
-versioning principles.
+The format is based on Keep a Changelog
+and this project follows Semantic Versioning.
+
+
+## [1.2.0] - 2026-02-26
+
+### Added
+- Interactive Graph Viewer (Edit tab → "Graph (SVG)")
+  - Runs in a separate process using pywebview
+  - Embedded SVG display
+  - Mouse wheel zoom
+  - Left-click + drag pan
+  - Double-click to fit
+  - "Refresh" button re-exports DOT + SVG
+- CLI export mode:
+  - `--export-graph --xml <file> --dot <file> --svg <file>`
+  - Enables programmatic graph export
+- Improved image viewer:
+  - Mouse wheel now performs zoom (instead of vertical scroll)
+  - Left-click + drag for panning
+  - Double-click to fit image to window
+  - Keyboard shortcuts:
+    - `F` → Fit to window
+    - `1` → 100% zoom
+
+### Changed
+- Image viewer mouse wheel behavior updated to match modern UX expectations (zoom instead of scroll)
+- Graph viewer logic moved to `ui/graph_viewer.py`
+- SVG export logic refactored to support CLI usage
+
+### Technical
+- Introduced new dependency: `pywebview`
+- Graph viewer runs in isolated process to avoid Tkinter mainloop conflicts
+- Temporary graph files generated in system temp directory
 
 ------------------------------------------------------------------------
 

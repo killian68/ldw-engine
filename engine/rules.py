@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Tuple, Any, Optional
 
-from engine.models import GameState, Choice, ChoiceCondition, ChoiceEffect
+from engine.models import GameState, Choice, ChoiceCondition, ChoiceEffect, Modifier, Event
 
 
 def inventory_has_item(state: GameState, key: str | None, text: str | None) -> bool:
@@ -100,3 +100,121 @@ def clamp_stats_non_negative(state: GameState, keys: Tuple[str, ...] = ("stamina
     Now also clamps to base_stats if present, for the given keys.
     """
     clamp_stats(state, keys=keys, clamp_min_zero=True, clamp_to_base=True)
+
+
+# -----------------------------
+# Runtime modifiers (NEW)
+# -----------------------------
+
+def add_modifier(state: GameState, payload: dict[str, Any]) -> None:
+    """
+    Add a runtime modifier to state.modifiers.
+
+    Expected keys in payload (from book_loader):
+      - source (str)
+      - target (str) e.g. "stat:skill"
+      - op (str) default "add"
+      - value (int)
+      - scope (str) "paragraph"|"scene"|"global"
+      - ref (str|None)
+      - label (str|None) optional (user-facing)
+    """
+    mods = getattr(state, "modifiers", None)
+    if mods is None:
+        # backward compatibility if older GameState doesn't have modifiers
+        state.modifiers = []
+        mods = state.modifiers
+
+    source = str(payload.get("source") or "environment")
+    target = str(payload.get("target") or "").strip()
+    if not target:
+        return
+
+    op = str(payload.get("op") or "add").strip().lower() or "add"
+    value = int(payload.get("value") or 0)
+    scope = str(payload.get("scope") or "paragraph").strip().lower() or "paragraph"
+    ref = payload.get("ref", None)
+    if ref is not None:
+        ref = str(ref).strip() or None
+
+    label = payload.get("label", None)
+    if label is not None:
+        label = str(label).strip() or None
+
+    if scope not in ("paragraph", "scene", "global"):
+        scope = "paragraph"
+
+    # If a ref is provided, replace existing with same ref (prevents stacking duplicates)
+    if ref:
+        mods[:] = [m for m in mods if getattr(m, "ref", None) != ref]
+
+    mods.append(
+        Modifier(
+            source=source,
+            target=target,
+            op=op,
+            value=int(value),
+            scope=scope,
+            ref=ref,
+            label=label,  # requires label field in Modifier; if you didn't add it yet, remove this line
+        )
+    )
+
+
+def remove_modifier(state: GameState, *, ref: str) -> None:
+    mods = getattr(state, "modifiers", None)
+    if not mods:
+        return
+    r = ref.strip()
+    if not r:
+        return
+    mods[:] = [m for m in mods if getattr(m, "ref", None) != r]
+
+
+def clear_modifiers(state: GameState, *, scope: str = "paragraph") -> None:
+    mods = getattr(state, "modifiers", None)
+    if not mods:
+        return
+
+    s = (scope or "paragraph").strip().lower()
+    if s not in ("paragraph", "scene", "global"):
+        s = "paragraph"
+
+    mods[:] = [m for m in mods if (getattr(m, "scope", "paragraph") or "paragraph").strip().lower() != s]
+
+
+def purge_paragraph_modifiers(state: GameState) -> None:
+    """
+    Convenience helper: call this automatically when moving to a new paragraph.
+    """
+    clear_modifiers(state, scope="paragraph")
+
+
+def apply_event(state: GameState, event: Event) -> None:
+    """
+    Minimal event applier for modifier events.
+    (Other event types like combat/test are handled elsewhere.)
+    """
+    et = (event.type or "").strip().lower()
+    payload = event.payload
+
+    if et == "modifiers.add":
+        if isinstance(payload, dict):
+            add_modifier(state, payload)
+        return
+
+    if et == "modifiers.remove":
+        if isinstance(payload, dict):
+            ref = str(payload.get("ref") or "").strip()
+            if ref:
+                remove_modifier(state, ref=ref)
+        return
+
+    if et == "modifiers.clear":
+        if isinstance(payload, dict):
+            scope = str(payload.get("scope") or "paragraph").strip()
+            clear_modifiers(state, scope=scope)
+        return
+
+    # unknown event type: ignore
+    return

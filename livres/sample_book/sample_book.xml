@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <book id="tour_brumes" title="La Tour des Brumes" version="1.2" formatVersion="1.1">
 
   <ruleset name="ff_basic">
@@ -27,16 +27,12 @@
       <stat id="luck" default="9" />
     </stats>
 
-    <!-- Declarative tests (v1.1) -->
+    
     <tests>
-      <test id="luck_test"
-            stat="luck"
-            dice="2d6"
-            successIf="roll&lt;=stat"
-            consume="1" />
+      <test id="luck_test" stat="luck" dice="2d6" successIf="roll&lt;=stat" consume="1" />
     </tests>
 
-    <!-- Declarative combat profiles (v1.1) -->
+    
     <combatProfiles>
       <combat id="ff_classic">
         <attack dice="2d6" stat="skill" />
@@ -53,7 +49,7 @@
   </ruleset>
 
   <assets basePath="assets/illus/">
-    <!-- no images in this sample -->
+    
   </assets>
 
   <start paragraph="1" />
@@ -89,7 +85,7 @@ Au fond du puits, tu découvres un coffre dissimulé.
 
       <choice label="Prendre la dague et remonter" target="4">
         <effects>
-          <addItem text="Dague d&apos;argent" />
+          <addItem text="Dague d'argent" />
         </effects>
       </choice>
     </paragraph>
@@ -107,18 +103,14 @@ Tu remontes à la surface avec la dague.
 L’intérieur de la tour est sombre.
 Un escalier en colimaçon monte vers les étages supérieurs.
 Soudain, un bandit surgit de l’ombre !
-      </text>
+      
+</text>
 
-      <!-- allowFlee="1" to test flee -->
-      <event type="combat"
-             rulesRef="ff_classic"
-             allowFlee="1"
-             enemyName="Bandit"
-             enemySkill="8"
-             enemyStamina="10"
-             onWin="20"
-             onLose="900" />
-    </paragraph>
+      
+      <event type="modifiers.add" source="environment" target="stat:skill" op="add" value="-1" scope="paragraph" ref="low_light_attack" label="Faible luminosité : -1 à l’attaque" />
+
+      
+      <event type="combat" rulesRef="ff_classic" allowFlee="1" enemyName="Bandit" enemySkill="8" enemyStamina="10" onWin="20" onLose="900" /></paragraph>
 
     <paragraph id="20">
       <text>
@@ -145,11 +137,8 @@ Peut-être pourrais-tu forcer la serrure ?
 Tu tentes ta chance...
       </text>
 
-      <!-- strict / neutral: testRef only -->
-      <event type="test"
-             testRef="luck_test"
-             successGoto="40"
-             failGoto="901" />
+      
+      <event type="test" testRef="luck_test" successGoto="40" failGoto="901" />
     </paragraph>
 
     <paragraph id="40">
@@ -157,8 +146,9 @@ Tu tentes ta chance...
 La serrure cède !
 À l’intérieur, une bourse remplie de pièces d’or.
 Tu as réussi !
-      </text>
-    </paragraph>
+      
+</text>
+    <choice target="902">Voir la fin</choice></paragraph>
 
     <paragraph id="901">
       <text>

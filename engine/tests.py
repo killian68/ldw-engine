@@ -20,9 +20,9 @@ class TestOutcome:
     - roll_total: total rolled (including offset)
     - roll_detail: raw dice (n rolls) when available
     - stat_id: which stat was tested
-    - stat_before/stat_after: stat values before and after consume
+    - stat_before/stat_after: EFFECTIVE stat values (base + modifiers) before/after consume
     - success: whether the test succeeded
-    - consumed: how many points were consumed from the stat
+    - consumed: how many points were consumed from the BASE stat
     - test_ref: which declarative rule was used (if any)
     """
     roll_total: int
@@ -34,6 +34,47 @@ class TestOutcome:
     consumed: int
     test_ref: Optional[str] = None
 
+
+# -----------------------------
+# Runtime modifiers helpers (NEW)
+# -----------------------------
+
+def _sum_stat_modifiers(state: GameState, stat_id: str) -> int:
+    """
+    Sum all runtime modifiers that target a given stat.
+
+    Expected target format: "stat:<stat_id>"
+    Only supports op="add" for now.
+
+    Backward compatible if state has no 'modifiers' attribute.
+    """
+    mods = getattr(state, "modifiers", None)
+    if not mods:
+        return 0
+
+    target = f"stat:{stat_id}"
+    total = 0
+    for m in mods:
+        try:
+            if (getattr(m, "target", None) or "").strip() != target:
+                continue
+            op = (getattr(m, "op", "add") or "add").strip().lower()
+            if op != "add":
+                continue
+            total += int(getattr(m, "value", 0))
+        except Exception:
+            continue
+    return total
+
+
+def _get_effective_stat(state: GameState, stat_id: str) -> int:
+    base = int(state.stats.get(stat_id, 0))
+    return base + _sum_stat_modifiers(state, stat_id)
+
+
+# -----------------------------
+# Dice helpers
+# -----------------------------
 
 def parse_roll_expression(expr: str) -> tuple[int, int, int]:
     m = _ROLL_EXPR_RE.match(expr or "")
@@ -107,6 +148,11 @@ def run_test_with_roll(
     Priority:
       1) if test_ref exists in ruleset.tests, use that TestRule (stat/successIf/consume)
       2) else use provided (stat_id, success_if, consume_on_success/fail)
+
+    IMPORTANT (NEW):
+      - success is evaluated against EFFECTIVE stat (base + modifiers)
+      - consumption reduces BASE stat in state.stats
+      - outcome stat_before/stat_after report EFFECTIVE values for UI
     """
     rule = resolve_test_rule(ruleset, test_ref)
 
@@ -125,21 +171,26 @@ def run_test_with_roll(
         consume_fail = int(consume_on_fail or 0)
         used_ref = test_ref
 
-    before = int(state.stats.get(_stat_id, 0))
-    success = eval_success_if(_success_if, roll_total=int(roll_total), stat_value=before)
+    base_before = int(state.stats.get(_stat_id, 0))
+    mods_total = _sum_stat_modifiers(state, _stat_id)
+    eff_before = int(base_before + mods_total)
+
+    success = eval_success_if(_success_if, roll_total=int(roll_total), stat_value=int(eff_before))
 
     consumed = (consume_success if success else consume_fail)
     consumed = max(0, int(consumed))
 
-    after = max(0, before - consumed)
-    state.stats[_stat_id] = after
+    base_after = max(0, int(base_before) - int(consumed))
+    state.stats[_stat_id] = int(base_after)
+
+    eff_after = int(base_after + mods_total)
 
     return TestOutcome(
         roll_total=int(roll_total),
         roll_detail=tuple(int(x) for x in (roll_detail or ())),
         stat_id=_stat_id,
-        stat_before=before,
-        stat_after=after,
+        stat_before=int(eff_before),
+        stat_after=int(eff_after),
         success=bool(success),
         consumed=int(consumed),
         test_ref=used_ref,

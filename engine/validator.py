@@ -75,7 +75,13 @@ def validate_book(book: Book, *, strict: bool = True) -> None:
 
         # events
         for ev in para.events:
-            if ev.type == "combat":
+            etype = (ev.type or "").strip().lower()
+
+            # ✅ NEW: accept runtime modifiers family (forward-compatible)
+            if etype.startswith("modifiers."):
+                continue
+
+            if etype == "combat":
                 spec: CombatSpec = ev.payload
                 # goto targets
                 if spec.on_win_goto and spec.on_win_goto not in pids:
@@ -107,7 +113,7 @@ def validate_book(book: Book, *, strict: bool = True) -> None:
                     if int(spec.enemy_stamina) < 0:
                         errors.append(ValidationError("COMBAT_ENEMY_STAMINA_INVALID", "enemyStamina must be >= 0", where_p))
 
-            elif ev.type == "test":
+            elif etype == "test":
                 spec: TestSpec = ev.payload
 
                 # goto targets

@@ -4,7 +4,7 @@ import random
 from dataclasses import dataclass
 from typing import List, Optional, Literal
 
-from engine.models import GameState, CombatSpec, Ruleset, CombatProfile, LuckRule
+from engine.models import GameState, CombatSpec, Ruleset, CombatProfile, LuckRule, Modifier
 from engine.tests import run_test  # ✅ single neutral test engine
 
 
@@ -46,6 +46,46 @@ def _roll_2d6(rng: random.Random) -> tuple[int, int]:
 
 def _sum_roll(r: tuple[int, int]) -> int:
     return int(r[0]) + int(r[1])
+
+
+# -----------------------------
+# Runtime modifiers helpers (NEW)
+# -----------------------------
+
+def _sum_stat_modifiers(state: GameState, stat_id: str) -> int:
+    """
+    Sum all runtime modifiers that target a given stat.
+
+    Expected target format: "stat:<stat_id>"
+    Only supports op="add" for now.
+
+    Backward compatible if state has no 'modifiers' attribute.
+    """
+    mods = getattr(state, "modifiers", None)
+    if not mods:
+        return 0
+
+    target = f"stat:{stat_id}"
+    total = 0
+    for m in mods:
+        try:
+            if getattr(m, "target", None) != target:
+                continue
+            if (getattr(m, "op", "add") or "add").strip() != "add":
+                continue
+            total += int(getattr(m, "value", 0))
+        except Exception:
+            # Never let a malformed modifier break combat
+            continue
+    return total
+
+
+def _get_effective_stat(state: GameState, stat_id: str) -> int:
+    """
+    Base stat from state.stats plus runtime modifiers.
+    """
+    base = int(state.stats.get(stat_id, 0))
+    return base + _sum_stat_modifiers(state, stat_id)
 
 
 def _default_profile() -> CombatProfile:
@@ -108,7 +148,7 @@ class CombatSession:
 
     def start_log(self) -> List[str]:
         atk_stat = (self.profile.attack_stat or "skill").strip()
-        p_skill = int(self.state.stats.get(atk_stat, 0))
+        p_skill = _get_effective_stat(self.state, atk_stat)
         p_stam = int(self.state.stats.get("stamina", 0))
 
         lines = [
@@ -134,7 +174,7 @@ class CombatSession:
 
     def _player_attack_strength(self, pr: tuple[int, int]) -> int:
         stat_id = (self.profile.attack_stat or "skill").strip()
-        p_stat = int(self.state.stats.get(stat_id, 0))
+        p_stat = _get_effective_stat(self.state, stat_id)
         return p_stat + _sum_roll(pr)
 
     def _enemy_attack_strength(self, er: tuple[int, int]) -> int:
@@ -310,7 +350,9 @@ class CombatSession:
             self.state.stats["stamina"] = 0
 
         logs.append(f"You escape, but take a blow while fleeing. (-{dmg} STAMINA)")
-        logs.append(f"Current STAMINA — You: {int(self.state.stats.get('stamina', 0))} | {self.enemy_name}: {self.enemy_stamina}")
+        logs.append(
+            f"Current STAMINA — You: {int(self.state.stats.get('stamina', 0))} | {self.enemy_name}: {self.enemy_stamina}"
+        )
 
         self.finished = True
         self.won = False

@@ -206,6 +206,34 @@ class Book:
 
 
 # -------------------------
+# Runtime modifiers (NEW)
+# -------------------------
+
+@dataclass
+class Modifier:
+    """
+    Generic modifier applied at runtime (buff/debuff/environment).
+
+    target examples:
+      - "stat:skill"
+      - "stat:stamina"
+      - "tag:ranged_attack" (if you later add tag-based resolution)
+
+    scope:
+      - "paragraph": active while current paragraph is active
+      - "scene": active for a whole scene/chapter until cleared
+      - "global": active until explicitly removed
+    """
+    source: str
+    target: str
+    op: str = "add"
+    value: int = 0
+    scope: str = "paragraph"
+    ref: Optional[str] = None
+    label: Optional[str] = None
+
+
+# -------------------------
 # Runtime state
 # -------------------------
 
@@ -235,3 +263,6 @@ class GameState:
 
     inventory: List[str] = field(default_factory=list)
     flags: Dict[str, bool] = field(default_factory=dict)
+
+    # NEW: active runtime modifiers (environment, buffs, etc.)
+    modifiers: List[Modifier] = field(default_factory=list)

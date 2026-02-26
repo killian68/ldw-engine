@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import xml.etree.ElementTree as ET
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 
 from engine.models import (
     Assets, Ruleset, CharacterCreationSpec, CharacterProfile,
@@ -28,6 +28,61 @@ def _first_text(elem: Optional[ET.Element]) -> str:
     if elem is None or elem.text is None:
         return ""
     return elem.text.strip()
+
+
+def _parse_bool_attr(elem: Optional[ET.Element], name: str, default: bool = False) -> bool:
+    if elem is None:
+        return default
+    v = (elem.get(name) or "").strip().lower()
+    if not v:
+        return default
+    return v in ("1", "true", "yes", "on")
+
+
+def _parse_modifier_payload(elem: ET.Element, *, source: str = "environment") -> Optional[Dict[str, Any]]:
+    """
+    Parses a modifier payload from attributes on an element.
+
+    Expected attributes:
+      - target="stat:skill" (required)
+      - value="-1" (int, optional -> 0)
+      - op="add" (optional -> add)
+      - scope="paragraph|scene|global" (optional -> paragraph)
+      - ref="low_light_attack" (optional)
+      - label="Faible luminosité : -1 à l’attaque" (optional)
+    """
+    target = (elem.get("target") or "").strip()
+    if not target:
+        return None
+
+    try:
+        value = int((elem.get("value") or "0").strip())
+    except ValueError:
+        value = 0
+
+    op = (elem.get("op") or "add").strip().lower() or "add"
+    scope = (elem.get("scope") or "paragraph").strip().lower() or "paragraph"
+    ref = (elem.get("ref") or "").strip() or None
+
+    # NEW: user-facing label (optional)
+    label = (elem.get("label") or "").strip() or None
+
+    if scope not in ("paragraph", "scene", "global"):
+        scope = "paragraph"
+
+    payload: Dict[str, Any] = {
+        "source": source,
+        "target": target,
+        "op": op,
+        "value": value,
+        "scope": scope,
+        "ref": ref,
+    }
+
+    if label:
+        payload["label"] = label
+
+    return payload
 
 
 def load_book(xml_path: str) -> Book:
@@ -257,6 +312,38 @@ def load_book(xml_path: str) -> Book:
         para = Paragraph(pid=pid, text=text, image_ref=image_ref)
 
         # -------------------------
+        # Environment effects -> Events (NEW)
+        # -------------------------
+        # Syntax 1: direct <envEffect .../>
+        for ee in p.findall("envEffect"):
+            payload = _parse_modifier_payload(ee, source="environment")
+            if payload:
+                para.events.append(Event(type="modifiers.add", payload=payload))
+
+        # Syntax 2: grouped <environment><effect .../></environment>
+        env_block = p.find("environment")
+        if env_block is not None:
+            for eff in env_block.findall("effect"):
+                payload = _parse_modifier_payload(eff, source="environment")
+                if payload:
+                    para.events.append(Event(type="modifiers.add", payload=payload))
+
+        # Optional: explicit clear at paragraph start:
+        # <clearModifiers scope="paragraph|scene|global"/>
+        for cm in p.findall("clearModifiers"):
+            scope = (cm.get("scope") or "").strip().lower() or "paragraph"
+            if scope not in ("paragraph", "scene", "global"):
+                scope = "paragraph"
+            para.events.append(Event(type="modifiers.clear", payload={"scope": scope}))
+
+        # Optional: explicit remove by ref:
+        # <removeModifier ref="mud_attack"/>
+        for rm in p.findall("removeModifier"):
+            ref = (rm.get("ref") or "").strip()
+            if ref:
+                para.events.append(Event(type="modifiers.remove", payload={"ref": ref}))
+
+        # -------------------------
         # Choices
         # -------------------------
         for c in p.findall("choice"):
@@ -317,6 +404,31 @@ def load_book(xml_path: str) -> Book:
             if not etype:
                 continue
 
+            # ---- Modifiers (NEW): <event type="modifiers.add|clear|remove" ... />
+            if etype.startswith("modifiers."):
+                if etype == "modifiers.add":
+                    src = (e.get("source") or "environment").strip() or "environment"
+                    payload = _parse_modifier_payload(e, source=src)
+                    if payload:
+                        para.events.append(Event(type="modifiers.add", payload=payload))
+                    continue
+
+                if etype == "modifiers.clear":
+                    scope = (e.get("scope") or "paragraph").strip().lower() or "paragraph"
+                    if scope not in ("paragraph", "scene", "global"):
+                        scope = "paragraph"
+                    para.events.append(Event(type="modifiers.clear", payload={"scope": scope}))
+                    continue
+
+                if etype == "modifiers.remove":
+                    ref = (e.get("ref") or "").strip()
+                    if ref:
+                        para.events.append(Event(type="modifiers.remove", payload={"ref": ref}))
+                    continue
+
+                # Unknown modifiers.* types are ignored
+                continue
+
             # ---- Combat ----
             if etype == "combat":
                 enemy = e.find("enemy")
@@ -324,7 +436,7 @@ def load_book(xml_path: str) -> Book:
                 on_lose = e.find("onLose")
 
                 rules_ref = (e.get("rulesRef") or "").strip() or None
-                allow_flee = (e.get("allowFlee") or "").strip().lower() in ("1", "true", "yes", "on")
+                allow_flee = _parse_bool_attr(e, "allowFlee", default=False)
 
                 if enemy is not None and on_win is not None and on_lose is not None:
                     spec = CombatSpec(

@@ -8,8 +8,14 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 
 from engine.book_loader import load_book, resolve_image_path
-from engine.models import GameState, Book, Paragraph, Choice, CombatSpec, TestSpec, CharacterProfile
-from engine.rules import is_choice_available, apply_choice_effects, clamp_stats_non_negative
+from engine.models import GameState, Book, Paragraph, Choice, CombatSpec, TestSpec, CharacterProfile, Modifier
+from engine.rules import (
+    is_choice_available,
+    apply_choice_effects,
+    clamp_stats_non_negative,
+    apply_event,
+    purge_paragraph_modifiers,
+)
 from engine.combat import CombatSession
 from engine.tests import resolve_test_rule, run_test_with_roll, roll_expr as test_roll_expr
 
@@ -19,7 +25,12 @@ from ui.sfx import play_wav
 from engine.validator import validate_book
 
 
-DEFAULT_BOOK_PATH = os.path.join(os.path.dirname(__file__), "..", "examples", "sample_book.xml")
+# Repo layout:
+#   <root>/main.py
+#   <root>/ui/app_tk.py  (this file)
+#   <root>/livres/<book_dir>/<book.xml> + assets/...
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+BOOKS_DIR = os.path.join(REPO_ROOT, "livres")
 
 # UI assets live next to ui/ (stable)
 UI_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -34,7 +45,7 @@ SFX_TIE = os.path.join(UI_SFX_DIR, "Sword.wav")
 SPECIAL_PREVIOUS = "previous"
 SPECIAL_RETURN = "return"
 CALL_PREFIX = "call:"
-SAVE_VERSION = 2  # bumped: base_stats are now persisted
+SAVE_VERSION = 3  # bumped: modifiers are now persisted
 
 # NdM±K (e.g., 1d6+6, 2d6+12, 1d6-1, 2d6)
 ROLL_EXPR_RE = re.compile(r"^\s*(\d+)\s*d\s*(\d+)\s*([+-]\s*\d+)?\s*$", re.IGNORECASE)
@@ -95,6 +106,14 @@ def _sfx_warn_if_missing(txt_widget: tk.Text) -> None:
     txt_widget.see("end")
 
 
+def _ensure_books_dir_exists() -> None:
+    # Don't hard-fail if missing; create it to match the intended layout.
+    try:
+        os.makedirs(BOOKS_DIR, exist_ok=True)
+    except Exception:
+        pass
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -110,7 +129,10 @@ class App(tk.Tk):
         self._build_menu()
         self._build_layout()
 
-        self.load_book(DEFAULT_BOOK_PATH)
+        # IMPORTANT: do NOT auto-load any sample book now.
+        # User must load via menu (default folder: <root>/livres).
+        _ensure_books_dir_exists()
+        self._render_no_book_loaded()
 
     # ---------- Menus ----------
 
@@ -216,12 +238,45 @@ class App(tk.Tk):
         ttk.Button(self.inv_frame, text="Edit", command=self.inv_edit).grid(row=1, column=1, padx=8, pady=6, sticky="ew")
         ttk.Button(self.inv_frame, text="Remove", command=self.inv_remove).grid(row=1, column=2, padx=8, pady=6, sticky="ew")
 
+    # ---------- Empty state ----------
+
+    def _render_no_book_loaded(self) -> None:
+        self.book = None
+        self.book_dir = ""
+        self.state = None
+        self.title("LDW Engine — No book loaded")
+
+        self.text_box.configure(state="normal")
+        self.text_box.delete("1.0", "end")
+        self.text_box.insert(
+            "1.0",
+            "No book loaded.\n\n"
+            "Use: File → Open book XML...\n\n"
+            f"Default library folder:\n{BOOKS_DIR}\n"
+        )
+        self.text_box.configure(state="disabled")
+
+        self.image_panel.set_image(None)
+
+        for child in self.choices_frame.winfo_children():
+            child.destroy()
+        ttk.Label(self.choices_frame, text="(Load a book to see choices)").grid(
+            row=0, column=0, sticky="w", padx=10, pady=10
+        )
+
+        self.inv_list.delete(0, "end")
+        for k, var in self.stats_vars.items():
+            var.set("0")
+            self.stats_base_vars[k].set("")
+
     # ---------- Book lifecycle ----------
 
     def open_book_dialog(self) -> None:
+        _ensure_books_dir_exists()
         path = filedialog.askopenfilename(
             title="Open book XML",
-            filetypes=[("XML Files", "*.xml"), ("All Files", "*.*")]
+            initialdir=BOOKS_DIR,
+            filetypes=[("XML Files", "*.xml")],
         )
         if path:
             self.load_book(path)
@@ -235,7 +290,8 @@ class App(tk.Tk):
             stats=stats,
             base_stats=dict(stats),
             inventory=[],
-            flags={}
+            flags={},
+            modifiers=[],
         )
         self.state.history = []
         self.state.return_stack = []
@@ -243,11 +299,7 @@ class App(tk.Tk):
     def load_book(self, xml_path: str) -> None:
         try:
             book = load_book(xml_path)
-
-            # ✅ XML/ruleset validation (strict mode by default)
-            # Use strict=False if you prefer warnings-only behavior.
             validate_book(book, strict=True)
-
         except Exception as e:
             messagebox.showerror("Load error", str(e))
             return
@@ -268,6 +320,7 @@ class App(tk.Tk):
 
     def restart_book(self) -> None:
         if not self.book:
+            messagebox.showinfo("Restart", "No book loaded.")
             return
         self._init_state_for_book()
         self.rng = random.Random()
@@ -290,13 +343,14 @@ class App(tk.Tk):
 
     def save_dialog(self) -> None:
         if not self.book or not self.state:
+            messagebox.showinfo("Save", "No book loaded.")
             return
         path = filedialog.asksaveasfilename(
             title="Save game",
             defaultextension=".json",
             initialfile=self._default_save_filename(),
             initialdir=self.book_dir or os.getcwd(),
-            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")]
+            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
         )
         if not path:
             return
@@ -307,10 +361,13 @@ class App(tk.Tk):
             messagebox.showerror("Save error", str(e))
 
     def load_save_dialog(self) -> None:
+        if not self.book:
+            messagebox.showinfo("Load save", "Load a book first (File → Open book XML...).")
+            return
         path = filedialog.askopenfilename(
             title="Load save game",
             initialdir=self.book_dir or os.getcwd(),
-            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")]
+            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
         )
         if not path:
             return
@@ -333,6 +390,18 @@ class App(tk.Tk):
                 "base_stats": getattr(self.state, "base_stats", {}),
                 "inventory": self.state.inventory,
                 "flags": self.state.flags,
+                "modifiers": [
+                    {
+                        "source": m.source,
+                        "target": m.target,
+                        "op": m.op,
+                        "value": m.value,
+                        "scope": m.scope,
+                        "ref": m.ref,
+                        "label": getattr(m, "label", None),
+                    }
+                    for m in (getattr(self.state, "modifiers", None) or [])
+                ],
                 "history": list(getattr(self.state, "history", [])),
                 "return_stack": list(getattr(self.state, "return_stack", [])),
             }
@@ -358,12 +427,30 @@ class App(tk.Tk):
         stats = dict(s.get("stats") or {})
         base_stats = dict(s.get("base_stats") or {}) or dict(stats)
 
+        mods_raw = list(s.get("modifiers") or [])
+        modifiers: list[Modifier] = []
+        for d in mods_raw:
+            if not isinstance(d, dict):
+                continue
+            modifiers.append(
+                Modifier(
+                    source=str(d.get("source") or "environment"),
+                    target=str(d.get("target") or ""),
+                    op=str(d.get("op") or "add"),
+                    value=int(d.get("value") or 0),
+                    scope=str(d.get("scope") or "paragraph"),
+                    ref=(str(d.get("ref")).strip() if d.get("ref") is not None else None),
+                    label=(str(d.get("label")).strip() if d.get("label") is not None else None),
+                )
+            )
+
         self.state = GameState(
             current_paragraph=cur,
             stats=stats,
             base_stats=base_stats,
             inventory=list(s.get("inventory") or []),
             flags=dict(s.get("flags") or {}),
+            modifiers=modifiers,
         )
         self.state.history = list(s.get("history") or [])
         self.state.return_stack = list(s.get("return_stack") or [])
@@ -376,6 +463,9 @@ class App(tk.Tk):
     # ---------- Character creation ----------
 
     def reroll_character_dialog(self) -> None:
+        if not self.book or not self.state:
+            messagebox.showinfo("Character", "Load a book first.")
+            return
         self._maybe_run_character_creation(on_load=False)
         self._sync_stats_to_ui()
         self._sync_inventory_to_ui()
@@ -475,7 +565,9 @@ class App(tk.Tk):
 
             keys = list(profile.stat_rolls.keys())
             preferred = ["skill", "stamina", "luck"]
-            ordered: list[str] = [k for k in preferred if k in profile.stat_rolls] + [k for k in keys if k not in preferred]
+            ordered: list[str] = [k for k in preferred if k in profile.stat_rolls] + [
+                k for k in keys if k not in preferred
+            ]
 
             if not ordered:
                 ttk.Label(rows_frame, text="(No rolls defined for this profile)").grid(row=0, column=0, sticky="w")
@@ -559,6 +651,7 @@ class App(tk.Tk):
                             rolled_values[sid] = int(total_2d6) + int(off)
                             pending["n"] -= 1
                             finish_if_done()
+
                         return _done
 
                     dice_widgets[stat_id].animate_and_lock(self.rng, on_done=on_done_factory(stat_id, offset))
@@ -751,9 +844,27 @@ class App(tk.Tk):
             messagebox.showerror("Error", f"Paragraph not found: {self.state.current_paragraph}")
             return
 
+        # NEW: purge paragraph-scoped modifiers, then apply modifier events for this paragraph
+        purge_paragraph_modifiers(self.state)
+        for ev in para.events:
+            if (ev.type or "").startswith("modifiers."):
+                apply_event(self.state, ev)
+
         self.text_box.configure(state="normal")
         self.text_box.delete("1.0", "end")
         self.text_box.insert("1.0", f"[{para.pid}]\n\n{para.text}")
+
+        # NEW: show active effects (optional but useful)
+        mods = getattr(self.state, "modifiers", []) or []
+        if mods:
+            self.text_box.insert("end", "\n\n[Active effects]\n")
+            for m in mods:
+                label = getattr(m, "label", None)
+                if label:
+                    self.text_box.insert("end", f"- {label}\n")
+                else:
+                    self.text_box.insert("end", f"- {m.source}: {m.target} {m.op} {m.value} ({m.scope})\n")
+
         self.text_box.configure(state="disabled")
 
         img_path = None
@@ -800,6 +911,12 @@ class App(tk.Tk):
     def _handle_events(self, para: Paragraph) -> bool:
         if not self.state:
             return False
+
+        # NEW: apply modifier events here too (safe / idempotent with ref replace)
+        for ev in para.events:
+            if (ev.type or "").startswith("modifiers."):
+                apply_event(self.state, ev)
+
         for ev in para.events:
             if ev.type == "combat":
                 return self._run_combat(ev.payload)
@@ -840,7 +957,7 @@ class App(tk.Tk):
         luck_cb = ttk.Checkbutton(
             options_row,
             text="Use Luck (Test your Luck) when applicable",
-            variable=use_luck_var
+            variable=use_luck_var,
         )
         luck_cb.grid(row=0, column=0, sticky="w")
         if not luck_supported:
@@ -988,6 +1105,31 @@ class App(tk.Tk):
         dice_expr = (rule.dice if rule and rule.dice else (spec.dice or "2d6")).strip()
         stat_id = (rule.stat if rule and rule.stat else spec.stat_id).strip()
 
+        # -----------------------------
+        # Option A (local helpers): effective stat = base + runtime modifiers
+        # -----------------------------
+        def _sum_stat_modifiers(stat: str) -> int:
+            mods = getattr(self.state, "modifiers", None)
+            if not mods:
+                return 0
+            target = f"stat:{stat}"
+            total = 0
+            for m in mods:
+                try:
+                    if (getattr(m, "target", "") or "").strip() != target:
+                        continue
+                    op = (getattr(m, "op", "add") or "add").strip().lower()
+                    if op != "add":
+                        continue
+                    total += int(getattr(m, "value", 0))
+                except Exception:
+                    continue
+            return total
+
+        def _effective_stat(stat: str) -> int:
+            base = int(self.state.stats.get(stat, 0))
+            return base + _sum_stat_modifiers(stat)
+
         top = tk.Toplevel(self)
         top.title(f"Test: {stat_id}")
         top.geometry("760x520")
@@ -1030,7 +1172,7 @@ class App(tk.Tk):
 
         top.protocol("WM_DELETE_WINDOW", _close_as_fail)
 
-        stat_val = int(self.state.stats.get(stat_id, 0))
+        stat_val = _effective_stat(stat_id)
         txt.insert("end", f"Testing {stat_id.upper()} ({stat_val})\n")
         txt.insert("end", f"Roll: {dice_expr}\n\n")
         txt.insert("end", "Click 'Roll' to throw the dice.\n\n")
@@ -1064,6 +1206,7 @@ class App(tk.Tk):
 
             # 2d6 -> animate, then apply pre-rolled total (NO double-roll)
             if dice_expr.lower() == "2d6":
+
                 def after_roll(total: int):
                     outcome = run_test_with_roll(
                         self.state,
