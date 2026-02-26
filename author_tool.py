@@ -8,7 +8,7 @@ import sys
 import tempfile
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
-
+from ui.icon import patch_toplevel_icon
 import xml.etree.ElementTree as ET
 
 from engine.book_loader import load_book, resolve_image_path
@@ -60,6 +60,7 @@ def _pid_sort_key(pid: str):
 class AuthorTool(tk.Tk):
     def __init__(self):
         super().__init__()
+        patch_toplevel_icon(self)
         self.title("LDW Author Tool — (no book loaded)")
         self.geometry("1300x820")
 

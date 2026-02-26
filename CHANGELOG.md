@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog
 and this project follows Semantic Versioning.
 
+## [1.2.1] - 2026-02-26
+
+### Added
+- Global application icon system (`ui/icon.py`)
+- Automatic icon injection for all Tkinter windows (root + Toplevel)
+- UI asset directory (`ui/assets/icons/`)
+- Windows multi-resolution `.ico`
+- macOS `.icns`
+- Linux PNG variants (512 / 256 / 128)
+
+### Improved
+- Professional desktop integration across platforms
+- Consistent branding across all UI windows
+
 
 ## [1.2.0] - 2026-02-26
 
