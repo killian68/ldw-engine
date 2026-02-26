@@ -1,11 +1,13 @@
 # Author Tool (Book Inspector)
 
-The **LDW Author Tool** is a Tkinter desktop utility for inspecting and validating LDW XML gamebooks.
+The **LDW Author Tool** is a Tkinter desktop utility for inspecting, editing, and validating LDW XML gamebooks.
 It is intended for **authors and maintainers**, not for players.
 
 It loads a book using the same parser as the engine (`engine.book_loader.load_book`) and provides:
-- paragraph outline + preview
+
+- full paragraph editing (text, choices, events, modifiers)
 - link graph inspection (incoming/outgoing)
+- interactive graph viewer (SVG)
 - asset management (import/link/unlink/delete + preview)
 - full-text search across paragraphs
 - validation report (errors/warnings/info)
@@ -20,6 +22,8 @@ The tool is **non-destructive by default**, and when it edits XML it automatical
 The tool is implemented as a standalone Tkinter app:
 
 - `author_tool.py`
+- `ui/graph_viewer.py` (separate process viewer for SVG graphs)
+- `ui/image_viewer.py` (interactive image preview)
 
 It can be launched directly:
 
@@ -27,187 +31,203 @@ It can be launched directly:
 python author_tool.py
 ```
 
-On startup it tries to auto-load:
+The tool loads books from:
 
-- `examples/sample_book.xml`
-
-(if the file exists)
+- `<racine>/livres/`
 
 ---
 
-## Features by Tab
+# Features by Tab
 
-### 1) Outline
+## 1) Edit
 
-Purpose: browse paragraph IDs, preview paragraph text, and inspect choices.
+Purpose: full paragraph editing.
 
 Includes:
-- Filter box (matches paragraph ID or paragraph text)
-- Paragraph list (IDs)
-- Preview panel:
-  - paragraph text excerpt
-  - choices list (`label -> target`)
-  - image ref if present
 
-Actions:
-- **Copy ID**: copies the selected paragraph ID to clipboard
-- **Assign Image (import)...**:
-  - prompts for an image file
-  - copies it into the book assets directory (`<assets basePath="...">`)
-  - creates/updates `<assets><image id="..." file="..."/></assets>`
-  - links the paragraph with `<image ref="..."/>`
-  - writes the XML back to disk
-  - creates a backup `book.xml.bak`
+- Paragraph list (with filter by ID or text)
+- Text editor
+- Choices editor (add/edit/remove)
+- Combat event editor
+- Test event editor
+- Environment modifiers (`envEffect`) editor
+- Add/Delete paragraph
+- Safe save with automatic `.bak` backup
 
-Asset naming rule:
-- file is named from the paragraph id, e.g. `p10.png`, `p10_2.png`, etc.
-- asset id is the filename without extension (`p10`, `p10_2`, ...)
+Graph integration:
+
+- **Graph (SVG)** button
+  - Exports DOT
+  - Generates SVG via Graphviz
+  - Launches interactive Graph Viewer
+  - Supports zoom, pan, and refresh
+
+The XML is rewritten safely on each save.
 
 ---
 
-### 2) Links
+## 2) Links
 
 Purpose: inspect the link graph around a paragraph.
 
 Shows:
-- **Outgoing** targets from the paragraph (choices + combat event gotos)
+
+- **Outgoing** targets (choices + event gotos)
 - **Incoming** sources linking to the paragraph
 
 Tools:
-- **Export DOT...**: exports the whole book graph to a `.dot` file
-- **Export DOT + SVG**:
-  - requires Graphviz `dot`
-  - exports `.dot` and runs `dot -Tsvg`
-  - opens the resulting SVG (best effort on Windows via `os.startfile`)
 
-Notes:
-- The link graph is built via `engine.validate.build_link_index`.
+- **Export DOT...**
+- **Export DOT + SVG**
+- Graph building via `engine.validate.build_link_index`
 
 ---
 
-### 3) Assets
+## 3) Assets
 
 Purpose: manage `<assets>` declarations and paragraph image links.
 
 Displays a table of:
+
 - `asset_id`
-- `file` (relative file path)
-- `exists` (YES/NO on disk)
-- `used_by` (paragraph IDs currently referencing it)
+- `file`
+- `exists`
+- `used_by`
 
 Selecting an asset:
-- displays its resolved absolute path
-- previews the image if Pillow is installed and the file exists
+
+- displays resolved path
+- previews image (if Pillow installed)
 
 Buttons:
-- **Add Asset...**
-  - imports an image into the assets directory
-  - adds `<assets><image id="..." file="..."/></assets>`
-  - does **not** link it to any paragraph
-  - writes XML to disk (+ backup)
 
-- **Assign to selected paragraph**
-  - links the selected asset (Assets tab) to the selected paragraph (Outline tab)
-  - sets/creates `<image ref="..."/>`
-  - writes XML to disk (+ backup)
+- Add Asset
+- Import & link image
+- Link selected asset
+- Remove link
+- Delete selected asset
 
-- **Remove link from selected paragraph**
-  - removes `<image .../>` from the selected paragraph
-  - does not delete the asset or file
-  - writes XML to disk (+ backup)
-
-- **Delete selected asset...**
-  - removes `<image id="...">` declaration from `<assets>`
-  - if used by paragraphs, offers to unlink everywhere first
-  - optionally deletes the physical image file
-  - writes XML to disk (+ backup)
-
-Important safety behavior:
-- XML is saved first, file deletion is optional and happens after XML save.
+All operations create automatic `.bak` backups before writing XML.
 
 ---
 
-### 4) Search
+## 4) Search
 
 Purpose: full-text search across paragraph text.
 
-Usage:
-- type a query and press Enter or click **Search**
-- results list displays paragraph IDs where the query appears in paragraph text
-- selecting a result:
-  - previews the paragraph snippet (up to ~1200 chars)
-  - selects the paragraph in the Outline tab
-  - sets the paragraph in the Links tab
+Selecting a result:
+
+- previews snippet
+- selects paragraph in Edit tab
+- synchronizes with Links tab
 
 ---
 
-### 5) Validation
+## 5) Validation
 
-Purpose: run book validation using the engine validator.
+Purpose: run book validation using engine validator.
 
 Uses:
+
 - `engine.validate.validate_book(book, book_dir)`
 
 Displays:
-- summary counts: Errors / Warnings / Info
-- issue list:
-  - severity
-  - paragraph id (if any)
-  - message
 
-Behavior:
-- selecting an issue with a paragraph id jumps to that paragraph in Outline and Links.
+- Errors
+- Warnings
+- Info
+
+Selecting an issue jumps to the related paragraph.
 
 ---
 
-## XML Editing and Backups
+# Graph Viewer (v1.2.0)
 
-Whenever the tool modifies the XML, it performs:
+The Graph Viewer is isolated from the main Tkinter process.
 
-1) Create a backup file:
-   - `book.xml.bak`
+Architecture:
 
-2) Write updated XML back to the original file path:
-   - `book.xml`
+- DOT export via engine
+- SVG generated via Graphviz
+- Viewer launched as separate subprocess
+- Interactive via `pywebview`
 
-This is implemented by `_save_xml_with_backup()`.
+Features:
 
----
+- Mouse wheel zoom
+- Left-click + drag pan
+- Double-click fit
+- Refresh button re-exports graph via CLI
 
-## Dependencies
+CLI export mode:
 
-Required:
-- Python 3.8+
-- Tkinter (typically bundled with Python)
-
-Optional:
-- Pillow (enables image preview & resizing)
-
-Install Pillow:
 ```bash
-pip install pillow
+python author_tool.py --export-graph --xml <book.xml> --dot graph.dot --svg graph.svg
 ```
 
-Optional (for SVG export):
-- Graphviz (the `dot` command must be available)
-
-Windows default Graphviz locations are checked:
-- `C:\Program Files\Graphviz\bin\dot.exe`
-- `C:\Program Files (x86)\Graphviz\bin\dot.exe`
+This allows reuse in automation or scripting.
 
 ---
 
-## Intended Use
+# XML Editing and Backups
 
-The Author Tool is meant to assist with:
-- iterating quickly on XML structure
-- managing assets safely
-- finding broken links early
-- keeping the book graph understandable (via DOT export)
+Whenever the tool modifies XML:
+
+1. Create backup:
+   - `book.xml.bak`
+2. Write updated XML
+3. Reload book in memory
+
+Implemented by `_save_xml_with_backup()`.
+
+---
+
+# Dependencies
+
+Required:
+
+- Python 3.8+
+- Tkinter
+
+Optional:
+
+- Pillow (image preview & zoom)
+- pywebview (Graph Viewer)
+- Graphviz (for DOT → SVG)
+
+Install optional packages:
+
+```bash
+pip install pillow pywebview
+```
+
+Graphviz must provide `dot` in PATH.
+
+---
+
+# Intended Use
+
+The Author Tool assists with:
+
+- Editing paragraph structure
+- Managing events declaratively
+- Managing assets safely
+- Validating rule references
+- Visualizing the full book graph interactively
 
 It is not designed to:
-- generate story content
-- perform OCR conversion
-- edit paragraph text (today it only edits assets and image links)
 
-Those features can be added later if needed.
+- Generate story content
+- Replace a full text IDE
+- Provide WYSIWYG layout editing
+
+---
+
+# Design Philosophy
+
+The Author Tool respects core engine principles:
+
+- Engine logic remains neutral
+- XML remains declarative
+- UI never redefines rule behavior
+- Graph viewer runs isolated to avoid mainloop conflicts
