@@ -240,23 +240,90 @@ The project includes a validator module for strict checking.
 
 ## Requirements
 
--   Python 3.8+
--   Tkinter
--   Pillow
--   pywebview (for graph viewer)
--   Graphviz (dot executable available in PATH)
+- Python 3.8+
+- Tkinter
+- Pillow
+- pywebview (for graph viewer)
+- Qt backend (PySide6 + QtWebEngine)
+- Graphviz (`dot` executable available in PATH)
 
-Linux:
+---
 
-    sudo apt install python3-tk python3-pil.imagetk graphviz
-    pip install pillow pywebview
+### Linux (Ubuntu / Debian)
 
-Windows:
+#### System dependencies
 
-    Install Graphviz and ensure `dot.exe` is in PATH  
-    pip install pillow pywebview
+    sudo apt install python3-tk python3-pil.imagetk graphviz \
+                     libxcb-cursor0
 
-Run:
+Notes:
+
+- `libxcb-cursor0` is required by Qt ≥ 6.5 when using the XCB platform plugin.
+- WebKitGTK is no longer required (Qt backend is now used for the Graph Viewer).
+
+---
+
+#### Python dependencies
+
+    pip install pillow pywebview pyside6 qtpy
+
+The Graph Viewer uses the Qt backend (PySide6) via `pywebview`.
+
+The application forces `QT_API=pyside6` internally to prevent accidental
+fallback to PyQt5 if it is installed on the system.
+
+---
+
+#### GNOME / Wayland
+
+If Qt fails to start under Wayland (GNOME), force the XCB platform plugin:
+
+    export QT_QPA_PLATFORM=xcb
+
+To make this persistent:
+
+    echo 'export QT_QPA_PLATFORM=xcb' >> ~/.bashrc
+
+This only affects Qt applications launched from your user session and
+does not modify the system display manager.
+
+---
+
+### Windows
+
+#### System dependencies
+
+Install **Graphviz** and ensure `dot.exe` is available in your system `PATH`.
+
+You can verify:
+
+    dot -V
+
+---
+
+#### Python dependencies
+
+    pip install pillow pywebview pyside6 qtpy
+
+The Graph Viewer uses the Qt backend (PySide6) via `pywebview`.
+
+`qtpy` is required to ensure consistent Qt binding selection.
+
+No additional system-level Qt installation is required on Windows
+when using PySide6 from pip.
+
+---
+
+### Notes
+
+- The Graph Viewer uses Qt (via PySide6) as the WebView backend.
+- WebKitGTK is no longer required.
+- On Linux, Qt may require `libxcb-cursor0` when using the XCB platform plugin.
+- JavaScript console warnings about passive event listeners are harmless.
+
+---
+
+## Run
 
     python main.py
 
