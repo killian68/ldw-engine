@@ -5,6 +5,100 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog
 and this project follows Semantic Versioning.
 
+## \[1.4.0\] -- 2026-02-27
+
+### 🚀 Major Improvements
+
+#### Graph Viewer -- Architecture Rewrite
+
+-   Replaced direct pywebview file loading with a local HTTP server
+    architecture
+-   `graph_viewer.py` now:
+    -   Starts a lightweight local server (127.0.0.1)
+    -   Serves `viewer.html`
+    -   Serves `graph.svg`
+    -   Exposes `/api/refresh` endpoint
+-   Eliminates fragile GTK WebKit issues on Linux
+-   Removes dependency on WebKitGTK
+-   Works reliably on Windows and Linux
+-   Automatic fallback to system browser when embedded backend is
+    unavailable
+
+------------------------------------------------------------------------
+
+### ✍ Author Tool Improvements
+
+#### Draft Editing Model
+
+-   Added in-memory draft system
+-   Paragraph edits are preserved when navigating between paragraphs
+-   No more accidental loss of changes
+-   Explicit save required to write to XML
+
+#### Visual State Indicators
+
+-   Paragraph list color coding:
+    -   Green → Clean (saved)
+    -   Black → Dirty (modified)
+-   Dirty state updates only when actual modifications occur
+-   Fixed recursive dirty-state stack overflow bug
+
+#### Graph Export Stability
+
+-   Refresh button now triggers export through HTTP endpoint
+-   Improved reliability across platforms
+
+------------------------------------------------------------------------
+
+### 🎨 UI Enhancements
+
+-   Unified icon injection for:
+    -   Main application (`app_tk`)
+    -   Author Tool
+-   Centralized icon logic via `ui/icon.py`
+-   Removed duplicated icon handling logic
+
+------------------------------------------------------------------------
+
+### 🧹 Internal Cleanup
+
+-   Removed embedded HTML from Python source
+-   Separated `viewer.html` into standalone file
+-   Simplified dependency model
+-   Improved process isolation for Graph Viewer
+-   Reduced platform-specific workarounds
+
+------------------------------------------------------------------------
+
+### 🔧 Dependency Changes
+
+#### Linux
+
+-   WebKitGTK no longer required
+-   Qt backend optional
+-   Default behavior uses system browser for Graph Viewer
+
+#### Windows
+
+-   Qt backend optional
+-   No system-level Qt installation required
+
+------------------------------------------------------------------------
+
+### ⚠ Breaking Changes
+
+-   Graph Viewer no longer depends on direct pywebview file loading
+-   WebKitGTK support removed
+-   Embedded HTML in `graph_viewer.py` removed (now external
+    `viewer.html`)
+
+------------------------------------------------------------------------
+
+### 📦 Version Rationale
+
+This release introduces architectural changes and major cross-platform
+stabilization. Therefore it is released as a minor version bump (1.4.0).
+
 ## [1.3.0] – 2026-02-27
 
 ### ✨ Improved – Graph Viewer Stability & Cross-Platform Support
