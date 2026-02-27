@@ -27,6 +27,14 @@ def _icon_path() -> str:
     return os.path.join(root, "ui", "assets", "Icons", "lveh_256.png")
 
 
+def get_icon_path() -> str:
+    """
+    Public helper: absolute path to the PNG icon used by the app.
+    Useful for non-Tk windows (e.g. pywebview).
+    """
+    return _icon_path()
+
+
 def _load_icon(root: tk.Misc) -> tk.PhotoImage | None:
     global _ICON_PHOTO
 

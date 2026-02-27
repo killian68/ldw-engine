@@ -9,6 +9,7 @@ import tempfile
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from ui.icon import patch_toplevel_icon
+
 import xml.etree.ElementTree as ET
 
 from engine.book_loader import load_book, resolve_image_path
@@ -81,6 +82,11 @@ class AuthorTool(tk.Tk):
         # Editor state (Edit tab)
         self._editing_pid: str | None = None
 
+        # Drafts / dirty tracking (per paragraph) — allows switching paragraphs without losing unsaved edits
+        self._drafts = {}  # pid -> state dict
+        self._dirty_pids = set()  # pids with unsaved changes
+        self._suspend_dirty = False  # block dirty marking while loading UI
+
         # Graph export scratch (temp is fine for this viewer)
         self._graph_out_dir = os.path.join(tempfile.gettempdir(), "ldw_author_tool_graph")
         os.makedirs(self._graph_out_dir, exist_ok=True)
@@ -90,6 +96,9 @@ class AuthorTool(tk.Tk):
 
         self._build_menu()
         self._build_ui()
+
+        # Confirm on close if there are unsaved changes
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # IMPORTANT: do NOT auto-load any sample book at startup.
         self._refresh_all()  # shows empty tabs nicely
@@ -109,7 +118,7 @@ class AuthorTool(tk.Tk):
         filem.add_separator()
         filem.add_command(label="Reload", command=self.reload_current)
         filem.add_separator()
-        filem.add_command(label="Exit", command=self.destroy)
+        filem.add_command(label="Exit", command=self._on_close)
 
     def _build_ui(self):
         self.nb = ttk.Notebook(self)
@@ -133,11 +142,31 @@ class AuthorTool(tk.Tk):
         self._build_search_tab()
         self._build_validation_tab()
 
+    def _confirm_discard_if_dirty(self, action: str) -> bool:
+        """Return True if it's OK to proceed with an action that would discard unsaved edits."""
+        if not getattr(self, "_dirty_pids", None):
+            return True
+        if not self._dirty_pids:
+            return True
+        return messagebox.askyesno(
+            "Unsaved changes",
+            f"There are unsaved changes in {len(self._dirty_pids)} paragraph(s).\n\n"
+            f"Proceed with '{action}' and discard them?",
+        )
+
+    def _on_close(self):
+        if self._confirm_discard_if_dirty("Exit"):
+            self.destroy()
+
     # -----------------------
     # Book load
     # -----------------------
 
     def open_book_dialog(self):
+        if not self._confirm_discard_if_dirty("Open book"):
+            return
+        self._drafts.clear()
+        self._dirty_pids.clear()
         initial_dir = BOOKS_DIR if os.path.isdir(BOOKS_DIR) else REPO_ROOT
 
         path = filedialog.askopenfilename(
@@ -149,6 +178,10 @@ class AuthorTool(tk.Tk):
             self.load_book(path)
 
     def reload_current(self):
+        if not self._confirm_discard_if_dirty("Reload"):
+            return
+        self._drafts.clear()
+        self._dirty_pids.clear()
         if self._current_book_path:
             self.load_book(self._current_book_path)
         else:
@@ -239,6 +272,207 @@ class AuthorTool(tk.Tk):
         return container if container is not None else self._xml_root
 
     # -----------------------
+    # Drafts / dirty helpers
+    # -----------------------
+
+    def _set_dirty(self, pid: str | None, dirty: bool):
+        if not pid:
+            return
+        if dirty:
+            self._dirty_pids.add(pid)
+        else:
+            self._dirty_pids.discard(pid)
+            # Once saved, we can drop the draft (we will reload from XML anyway)
+            self._drafts.pop(pid, None)
+
+        self._refresh_edit_list_colors()
+        self._update_current_dirty_label()
+
+    def _update_current_dirty_label(self):
+        """Update the small dirty indicator in the editor header without changing state."""
+        pid = self._editing_pid
+        if pid and pid in self._dirty_pids:
+            self.edit_dirty_var.set("● unsaved changes")
+        else:
+            self.edit_dirty_var.set("")
+
+    def _refresh_edit_list_colors(self):
+        if not hasattr(self, "edit_list"):
+            return
+        try:
+            for i in range(self.edit_list.size()):
+                pid = self.edit_list.get(i)
+                if pid in self._dirty_pids:
+                    self.edit_list.itemconfig(i, fg="black")
+                else:
+                    self.edit_list.itemconfig(i, fg="green")
+        except Exception:
+            # Some Tk builds might not support per-item config; ignore.
+            pass
+
+    def _gather_state_from_ui(self) -> dict:
+        """Capture current editor UI into a serializable state dict."""
+        text_val = self.edit_text.get("1.0", "end").strip("\n")
+
+        choices = []
+        for item in self.choices_tree.get_children():
+            label, target = self.choices_tree.item(item, "values")
+            choices.append(((label or "").strip(), (target or "").strip()))
+
+        mods = []
+        for item in self.mods_tree.get_children():
+            vals = self.mods_tree.item(item, "values")
+            if vals:
+                mods.append(tuple((v or "").strip() for v in vals))
+
+        combat = {
+            "enabled": bool(self.ev_combat_enabled.get()),
+            "rulesRef": (self.ev_rulesref.get() or "").strip(),
+            "allowFlee": bool(self.ev_allowflee.get()),
+            "enemyName": (self.ev_enemyname.get() or "").strip(),
+            "enemySkill": (self.ev_enemyskill.get() or "").strip(),
+            "enemyStamina": (self.ev_enemystamina.get() or "").strip(),
+            "onWin": (self.ev_onwin.get() or "").strip(),
+            "onLose": (self.ev_onlose.get() or "").strip(),
+        }
+
+        test = {
+            "enabled": bool(self.ev_test_enabled.get()),
+            "testRef": (self.ev_testref.get() or "").strip(),
+            "stat": (self.ev_test_stat.get() or "").strip(),
+            "dice": (self.ev_test_dice.get() or "").strip(),
+            "successGoto": (self.ev_test_success.get() or "").strip(),
+            "failGoto": (self.ev_test_fail.get() or "").strip(),
+            "consumeOnSuccess": (self.ev_test_cons_s.get() or "").strip(),
+            "consumeOnFail": (self.ev_test_cons_f.get() or "").strip(),
+        }
+
+        return {"text": text_val, "choices": choices, "mods": mods, "combat": combat, "test": test}
+
+    def _state_from_xml_node(self, node: ET.Element) -> dict:
+        txt_node = node.find("text")
+        txt_val = (txt_node.text or "") if txt_node is not None and txt_node.text is not None else ""
+        text_clean = txt_val.strip("\n")
+
+        choices = []
+        for ch in node.findall("choice"):
+            target = (ch.get("target") or "").strip()
+            label = (ch.get("label") or "").strip()
+            if not label:
+                label = (ch.text or "").strip() or "Continue"
+            choices.append((label, target))
+
+        combat = {"enabled": False, "rulesRef": "ff_classic", "allowFlee": False,
+                  "enemyName": "", "enemySkill": "", "enemyStamina": "", "onWin": "", "onLose": ""}
+        test = {"enabled": False, "testRef": "", "stat": "", "dice": "", "successGoto": "", "failGoto": "",
+                "consumeOnSuccess": "0", "consumeOnFail": "0"}
+
+        for ev in node.findall("event"):
+            etype = (ev.get("type") or "").strip().lower()
+            if etype == "combat" and not combat["enabled"]:
+                combat["enabled"] = True
+                combat["rulesRef"] = (ev.get("rulesRef") or "ff_classic").strip()
+                combat["allowFlee"] = (ev.get("allowFlee") or "").strip().lower() in ("1", "true", "yes", "on")
+                combat["enemyName"] = (ev.get("enemyName") or "").strip()
+                combat["enemySkill"] = (ev.get("enemySkill") or "").strip()
+                combat["enemyStamina"] = (ev.get("enemyStamina") or "").strip()
+                combat["onWin"] = (ev.get("onWin") or "").strip()
+                combat["onLose"] = (ev.get("onLose") or "").strip()
+            if etype == "test" and not test["enabled"]:
+                test["enabled"] = True
+                test["testRef"] = (ev.get("testRef") or "").strip()
+                test["stat"] = (ev.get("stat") or "").strip()
+                test["dice"] = (ev.get("dice") or "").strip()
+                test["successGoto"] = (ev.get("successGoto") or "").strip()
+                test["failGoto"] = (ev.get("failGoto") or "").strip()
+                test["consumeOnSuccess"] = (ev.get("consumeOnSuccess") or "0").strip()
+                test["consumeOnFail"] = (ev.get("consumeOnFail") or "0").strip()
+
+        mods = []
+        for ee in node.findall("envEffect"):
+            mods.append((
+                (ee.get("target") or "").strip(),
+                (ee.get("op") or "add").strip(),
+                (ee.get("value") or "0").strip(),
+                (ee.get("scope") or "paragraph").strip(),
+                (ee.get("ref") or "").strip(),
+                (ee.get("label") or "").strip(),
+            ))
+        env_block = node.find("environment")
+        if env_block is not None:
+            for eff in env_block.findall("effect"):
+                mods.append((
+                    (eff.get("target") or "").strip(),
+                    (eff.get("op") or "add").strip(),
+                    (eff.get("value") or "0").strip(),
+                    (eff.get("scope") or "paragraph").strip(),
+                    (eff.get("ref") or "").strip(),
+                    (eff.get("label") or "").strip(),
+                ))
+
+        return {"text": text_clean, "choices": choices, "mods": mods, "combat": combat, "test": test}
+
+    def _load_state_into_ui(self, pid: str, state: dict):
+        self._suspend_dirty = True
+        try:
+            self._editing_pid = pid
+            self.edit_pid_var.set(pid)
+
+            self.edit_text.configure(state="normal")
+            self.edit_text.delete("1.0", "end")
+            self.edit_text.insert("1.0", state.get("text", ""))
+            self.edit_text.edit_modified(False)
+
+            for it in self.choices_tree.get_children():
+                self.choices_tree.delete(it)
+            for label, target in state.get("choices", []):
+                self.choices_tree.insert("", "end", values=((label or "").strip(), (target or "").strip()))
+
+            # events
+            combat = state.get("combat", {}) or {}
+            self.ev_combat_enabled.set(bool(combat.get("enabled", False)))
+            self.ev_rulesref.set(combat.get("rulesRef", "ff_classic") or "ff_classic")
+            self.ev_allowflee.set(bool(combat.get("allowFlee", False)))
+            self.ev_enemyname.set(combat.get("enemyName", "") or "")
+            self.ev_enemyskill.set(combat.get("enemySkill", "") or "")
+            self.ev_enemystamina.set(combat.get("enemyStamina", "") or "")
+            self.ev_onwin.set(combat.get("onWin", "") or "")
+            self.ev_onlose.set(combat.get("onLose", "") or "")
+
+            test = state.get("test", {}) or {}
+            self.ev_test_enabled.set(bool(test.get("enabled", False)))
+            self.ev_testref.set(test.get("testRef", "") or "")
+            self.ev_test_stat.set(test.get("stat", "") or "")
+            self.ev_test_dice.set(test.get("dice", "") or "")
+            self.ev_test_success.set(test.get("successGoto", "") or "")
+            self.ev_test_fail.set(test.get("failGoto", "") or "")
+            self.ev_test_cons_s.set(test.get("consumeOnSuccess", "0") or "0")
+            self.ev_test_cons_f.set(test.get("consumeOnFail", "0") or "0")
+
+            for it in self.mods_tree.get_children():
+                self.mods_tree.delete(it)
+            for row in state.get("mods", []):
+                self.mods_tree.insert("", "end", values=tuple(row))
+
+            self._set_editor_enabled(True)
+        finally:
+            self._suspend_dirty = False
+
+        self._update_current_dirty_label()
+
+    def _capture_current_to_draft(self):
+        if not self._editing_pid:
+            return
+        # Only store if user has actually modified or already dirty
+        state = self._gather_state_from_ui()
+        self._drafts[self._editing_pid] = state
+
+    def _on_editor_var_change(self, *_args):
+        if self._suspend_dirty:
+            return
+        self._set_dirty(self._editing_pid, True)
+
+    # -----------------------
     # EDIT tab (new editor)
     # -----------------------
 
@@ -269,11 +503,13 @@ class AuthorTool(tk.Tk):
         btns.columnconfigure(1, weight=1)
         btns.columnconfigure(2, weight=1)
         btns.columnconfigure(3, weight=1)
+        btns.columnconfigure(4, weight=1)
 
         ttk.Button(btns, text="Add", command=self._edit_add_paragraph).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(btns, text="Save", command=self._edit_save_current).grid(row=0, column=1, sticky="ew", padx=4)
-        ttk.Button(btns, text="Delete", command=self._edit_delete_selected).grid(row=0, column=2, sticky="ew", padx=4)
-        ttk.Button(btns, text="Graph (SVG)", command=self._open_graph_viewer).grid(row=0, column=3, sticky="ew", padx=(4, 0))
+        ttk.Button(btns, text="Save All", command=self._edit_save_all).grid(row=0, column=2, sticky="ew", padx=4)
+        ttk.Button(btns, text="Delete", command=self._edit_delete_selected).grid(row=0, column=3, sticky="ew", padx=4)
+        ttk.Button(btns, text="Graph (SVG)", command=self._open_graph_viewer).grid(row=0, column=4, sticky="ew", padx=(4, 0))
 
         # Right editor panel
         editor = ttk.Frame(root)
@@ -436,6 +672,34 @@ class AuthorTool(tk.Tk):
             command=self._mods_insert_low_light_template,
         ).grid(row=2, column=0, sticky="w", padx=8, pady=(0, 8))
 
+
+        # Mark dirty when any event field changes (entries / checkboxes)
+        for v in (
+            self.ev_combat_enabled,
+            self.ev_allowflee,
+            self.ev_rulesref,
+            self.ev_enemyname,
+            self.ev_enemyskill,
+            self.ev_enemystamina,
+            self.ev_onwin,
+            self.ev_onlose,
+            self.ev_test_enabled,
+            self.ev_testref,
+            self.ev_test_stat,
+            self.ev_test_dice,
+            self.ev_test_success,
+            self.ev_test_fail,
+            self.ev_test_cons_s,
+            self.ev_test_cons_f,
+        ):
+            try:
+                v.trace_add("write", self._on_editor_var_change)
+            except Exception:
+                try:
+                    v.trace("w", lambda *_a: self._on_editor_var_change())
+                except Exception:
+                    pass
+
         self._set_editor_enabled(False)
 
     def _set_editor_enabled(self, enabled: bool):
@@ -446,13 +710,38 @@ class AuthorTool(tk.Tk):
         self.edit_pid_var.set(self._editing_pid or "(none)")
         self.edit_dirty_var.set("")
 
+
     def _mark_dirty(self):
-        try:
-            if self.edit_text.edit_modified():
-                self.edit_dirty_var.set("● unsaved changes")
+        """Called by Tk events/variable traces when the editor might have changed.
+
+        IMPORTANT: do not mark dirty on paragraph selection / UI refresh.
+        """
+        if self._suspend_dirty:
+            try:
                 self.edit_text.edit_modified(False)
+            except Exception:
+                pass
+            return
+
+        # No paragraph selected => nothing to mark
+        if not self._editing_pid:
+            try:
+                self.edit_text.edit_modified(False)
+            except Exception:
+                pass
+            return
+
+        # Only mark dirty if Tk reports *actual* user modifications.
+        try:
+            if not self.edit_text.edit_modified():
+                return
+            self.edit_text.edit_modified(False)
         except Exception:
-            self.edit_dirty_var.set("● unsaved changes")
+            # If Tk can't report the flag, be conservative and mark dirty.
+            pass
+
+        self._set_dirty(self._editing_pid, True)
+
 
     def _refresh_edit(self):
         self._refresh_edit_list()
@@ -473,6 +762,8 @@ class AuthorTool(tk.Tk):
                     if f not in t:
                         continue
             self.edit_list.insert("end", pid)
+
+        self._refresh_edit_list_colors()
 
     def _clear_editor(self):
         self._editing_pid = None
@@ -506,77 +797,29 @@ class AuthorTool(tk.Tk):
 
         self._set_editor_enabled(False)
 
+
     def _edit_select(self):
-        pid = self._get_selected_pid()
-        if not pid or not self.book or not self._xml_root:
+        new_pid = self._get_selected_pid()
+        if not new_pid or not self.book or not self._xml_root:
             return
 
-        node = self._find_paragraph_node(pid)
+        # When switching paragraphs, keep the current unsaved edits in memory
+        if self._editing_pid and self._editing_pid != new_pid:
+            self._capture_current_to_draft()
+
+        node = self._find_paragraph_node(new_pid)
         if node is None:
-            messagebox.showerror("XML error", f"Paragraph id='{pid}' not found in XML.")
+            messagebox.showerror("XML error", f"Paragraph id='{new_pid}' not found in XML.")
             return
 
-        self._editing_pid = pid
-        self.edit_pid_var.set(pid)
-        self.edit_dirty_var.set("")
+        # Load from draft if present, otherwise from XML
+        if new_pid in self._drafts:
+            state = self._drafts[new_pid]
+        else:
+            state = self._state_from_xml_node(node)
 
-        # Load <text>
-        txt_node = node.find("text")
-        txt_val = (txt_node.text or "") if txt_node is not None and txt_node.text is not None else ""
-        text_clean = txt_val.strip("\n")
-
-        self.edit_text.configure(state="normal")
-        self.edit_text.delete("1.0", "end")
-        self.edit_text.insert("1.0", text_clean)
-        self.edit_text.edit_modified(False)
-
-        # Load choices (direct children)
-        for it in self.choices_tree.get_children():
-            self.choices_tree.delete(it)
-        for ch in node.findall("choice"):
-            target = (ch.get("target") or "").strip()
-            label = (ch.get("label") or "").strip()
-            if not label:
-                label = (ch.text or "").strip() or "Continue"
-            self.choices_tree.insert("", "end", values=(label, target))
-
-        # Load events (combat/test)
-        self._load_events_from_xml(node)
-
-        # Load envEffect
-        for it in self.mods_tree.get_children():
-            self.mods_tree.delete(it)
-        for ee in node.findall("envEffect"):
-            self.mods_tree.insert(
-                "",
-                "end",
-                values=(
-                    (ee.get("target") or "").strip(),
-                    (ee.get("op") or "add").strip(),
-                    (ee.get("value") or "0").strip(),
-                    (ee.get("scope") or "paragraph").strip(),
-                    (ee.get("ref") or "").strip(),
-                    (ee.get("label") or "").strip(),
-                ),
-            )
-        env_block = node.find("environment")
-        if env_block is not None:
-            for eff in env_block.findall("effect"):
-                self.mods_tree.insert(
-                    "",
-                    "end",
-                    values=(
-                        (eff.get("target") or "").strip(),
-                        (eff.get("op") or "add").strip(),
-                        (eff.get("value") or "0").strip(),
-                        (eff.get("scope") or "paragraph").strip(),
-                        (eff.get("ref") or "").strip(),
-                        (eff.get("label") or "").strip(),
-                    ),
-                )
-
-        self._set_editor_enabled(True)
-        self._select_links_pid(pid)
+        self._load_state_into_ui(new_pid, state)
+        self._select_links_pid(new_pid)
 
     def _load_events_from_xml(self, p_node: ET.Element):
         # reset
@@ -718,23 +961,10 @@ class AuthorTool(tk.Tk):
         self.load_book(self._current_book_path)
         messagebox.showinfo("Deleted", f"Paragraph {pid} deleted.\nBackup: {bak}")
 
-    def _edit_save_current(self):
-        if not self._xml_root or not self._xml_tree or not self._current_book_path:
-            messagebox.showwarning("No book", "Load a book first.")
-            return
 
-        pid = self._editing_pid
-        if not pid:
-            messagebox.showinfo("Save", "Select a paragraph first.")
-            return
-
-        p_node = self._find_paragraph_node(pid)
-        if p_node is None:
-            messagebox.showerror("XML error", f"Paragraph id='{pid}' not found in XML.")
-            return
-
+    def _apply_state_to_xml_node(self, p_node: ET.Element, state: dict):
         # --- Save text ---
-        text_val = self.edit_text.get("1.0", "end").strip("\n")
+        text_val = (state.get("text") or "").strip("\n")
         txt_node = p_node.find("text")
         if txt_node is None:
             txt_node = ET.SubElement(p_node, "text")
@@ -743,9 +973,7 @@ class AuthorTool(tk.Tk):
         # --- Save choices ---
         for ch in list(p_node.findall("choice")):
             p_node.remove(ch)
-
-        for item in self.choices_tree.get_children():
-            label, target = self.choices_tree.item(item, "values")
+        for label, target in state.get("choices", []) or []:
             label = (label or "").strip()
             target = (target or "").strip()
             if not target:
@@ -754,24 +982,22 @@ class AuthorTool(tk.Tk):
             ch.set("target", target)
             ch.text = label or "Continue"
 
-        # --- Save events ---
+        # --- Save events (combat/test) ---
         for ev in list(p_node.findall("event")):
             et = (ev.get("type") or "").strip().lower()
             if et in ("combat", "test"):
                 p_node.remove(ev)
 
-        if self.ev_combat_enabled.get():
+        combat = state.get("combat", {}) or {}
+        if combat.get("enabled"):
             ev = ET.SubElement(p_node, "event")
             ev.set("type", "combat")
-
-            rules_ref = (self.ev_rulesref.get() or "").strip()
+            rules_ref = (combat.get("rulesRef") or "").strip()
             if rules_ref:
                 ev.set("rulesRef", rules_ref)
-
-            if self.ev_allowflee.get():
+            if combat.get("allowFlee"):
                 ev.set("allowFlee", "1")
-
-            enemy_name = (self.ev_enemyname.get() or "").strip() or "Enemy"
+            enemy_name = (combat.get("enemyName") or "").strip() or "Enemy"
             ev.set("enemyName", enemy_name)
 
             def _int_or_default(s: str, d: int) -> str:
@@ -780,34 +1006,31 @@ class AuthorTool(tk.Tk):
                 except Exception:
                     return str(d)
 
-            ev.set("enemySkill", _int_or_default(self.ev_enemyskill.get(), 6))
-            ev.set("enemyStamina", _int_or_default(self.ev_enemystamina.get(), 6))
+            ev.set("enemySkill", _int_or_default(combat.get("enemySkill", ""), 6))
+            ev.set("enemyStamina", _int_or_default(combat.get("enemyStamina", ""), 6))
 
-            on_win = (self.ev_onwin.get() or "").strip()
-            on_lose = (self.ev_onlose.get() or "").strip()
+            on_win = (combat.get("onWin") or "").strip()
+            on_lose = (combat.get("onLose") or "").strip()
             if on_win:
                 ev.set("onWin", on_win)
             if on_lose:
                 ev.set("onLose", on_lose)
 
-        if self.ev_test_enabled.get():
+        test = state.get("test", {}) or {}
+        if test.get("enabled"):
             ev = ET.SubElement(p_node, "event")
             ev.set("type", "test")
-
-            test_ref = (self.ev_testref.get() or "").strip()
+            test_ref = (test.get("testRef") or "").strip()
             if test_ref:
                 ev.set("testRef", test_ref)
-
-            stat_id = (self.ev_test_stat.get() or "").strip()
+            stat_id = (test.get("stat") or "").strip()
             if stat_id:
                 ev.set("stat", stat_id)
-
-            dice = (self.ev_test_dice.get() or "").strip()
+            dice = (test.get("dice") or "").strip()
             if dice:
                 ev.set("dice", dice)
-
-            succ = (self.ev_test_success.get() or "").strip()
-            fail = (self.ev_test_fail.get() or "").strip()
+            succ = (test.get("successGoto") or "").strip()
+            fail = (test.get("failGoto") or "").strip()
             if succ:
                 ev.set("successGoto", succ)
             if fail:
@@ -819,8 +1042,8 @@ class AuthorTool(tk.Tk):
                 except Exception:
                     return "0"
 
-            ev.set("consumeOnSuccess", _int0(self.ev_test_cons_s.get()))
-            ev.set("consumeOnFail", _int0(self.ev_test_cons_f.get()))
+            ev.set("consumeOnSuccess", _int0(test.get("consumeOnSuccess", "0")))
+            ev.set("consumeOnFail", _int0(test.get("consumeOnFail", "0")))
 
         # --- Save modifiers/envEffect ---
         for ee in list(p_node.findall("envEffect")):
@@ -829,15 +1052,15 @@ class AuthorTool(tk.Tk):
         if env_block is not None:
             p_node.remove(env_block)
 
-        for item in self.mods_tree.get_children():
-            target, op, value, scope, ref, label = self.mods_tree.item(item, "values")
+        for row in state.get("mods", []) or []:
+            if not row:
+                continue
+            target, op, value, scope, ref, label = (list(row) + ["", "", "", "", "", ""])[:6]
             target = (target or "").strip()
             if not target:
                 continue
-
             op = (op or "add").strip() or "add"
             scope = (scope or "paragraph").strip() or "paragraph"
-
             try:
                 ivalue = int(str(value).strip())
             except Exception:
@@ -853,18 +1076,80 @@ class AuthorTool(tk.Tk):
             if (label or "").strip():
                 ee.set("label", (label or "").strip())
 
+    def _edit_save_current(self):
+        if not self._xml_root or not self._xml_tree or not self._current_book_path:
+            messagebox.showwarning("No book", "Load a book first.")
+            return
+
+        pid = self._editing_pid
+        if not pid:
+            messagebox.showinfo("Save", "Select a paragraph first.")
+            return
+
+        p_node = self._find_paragraph_node(pid)
+        if p_node is None:
+            messagebox.showerror("XML error", f"Paragraph id='{pid}' not found in XML.")
+            return
+
+        # Capture current UI into draft and apply to XML
+        state = self._gather_state_from_ui()
+        self._drafts[pid] = state
+        self._apply_state_to_xml_node(p_node, state)
+
         try:
             bak = self._save_xml_with_backup()
         except Exception as e:
             messagebox.showerror("Save error", str(e))
             return
 
-        self.load_book(self._current_book_path)
+        # Reload parsed book model but keep drafts for other paragraphs
+        cur_path = self._current_book_path
+        self.load_book(cur_path)
 
-        self.edit_dirty_var.set("")
+        self._set_dirty(pid, False)
         messagebox.showinfo("Saved", f"Paragraph {pid} saved.\nBackup: {bak}")
-
         self._select_edit_pid(pid)
+
+    def _edit_save_all(self):
+        if not self._xml_root or not self._xml_tree or not self._current_book_path:
+            messagebox.showwarning("No book", "Load a book first.")
+            return
+        if not self._dirty_pids:
+            messagebox.showinfo("Save All", "No unsaved changes.")
+            return
+
+        # Ensure current paragraph's latest UI is in drafts
+        if self._editing_pid and self._editing_pid in self._dirty_pids:
+            self._drafts[self._editing_pid] = self._gather_state_from_ui()
+
+        # Apply all drafts to XML
+        for pid in sorted(self._dirty_pids, key=_pid_sort_key):
+            p_node = self._find_paragraph_node(pid)
+            if p_node is None:
+                continue
+            state = self._drafts.get(pid)
+            if state is None:
+                # fallback: keep existing XML
+                continue
+            self._apply_state_to_xml_node(p_node, state)
+
+        try:
+            bak = self._save_xml_with_backup()
+        except Exception as e:
+            messagebox.showerror("Save error", str(e))
+            return
+
+        cur_path = self._current_book_path
+        self.load_book(cur_path)
+
+        saved_count = len(self._dirty_pids)
+        self._dirty_pids.clear()
+        self._drafts.clear()
+        self._refresh_edit_list_colors()
+        self._update_current_dirty_label()
+
+        messagebox.showinfo("Save All", f"Saved {saved_count} paragraph(s).\nBackup: {bak}")
+
 
     # ---- choices CRUD ----
 
@@ -879,7 +1164,7 @@ class AuthorTool(tk.Tk):
         if target is None:
             return
         self.choices_tree.insert("", "end", values=((label or "").strip(), (target or "").strip()))
-        self.edit_dirty_var.set("● unsaved changes")
+        self._set_dirty(self._editing_pid, True)
 
     def _choices_edit(self):
         sel = self.choices_tree.selection()
@@ -894,14 +1179,14 @@ class AuthorTool(tk.Tk):
         if target is None:
             return
         self.choices_tree.item(item, values=((label or "").strip(), (target or "").strip()))
-        self.edit_dirty_var.set("● unsaved changes")
+        self._set_dirty(self._editing_pid, True)
 
     def _choices_remove(self):
         sel = self.choices_tree.selection()
         if not sel:
             return
         self.choices_tree.delete(sel[0])
-        self.edit_dirty_var.set("● unsaved changes")
+        self._set_dirty(self._editing_pid, True)
 
     # ---- modifiers CRUD ----
 
@@ -921,7 +1206,7 @@ class AuthorTool(tk.Tk):
                 "Luminosité faible : -1 à l'attaque",
             ),
         )
-        self.edit_dirty_var.set("● unsaved changes")
+        self._set_dirty(self._editing_pid, True)
 
     def _mods_add(self):
         if not self._editing_pid:
@@ -958,7 +1243,7 @@ class AuthorTool(tk.Tk):
                 (label or "").strip(),
             ),
         )
-        self.edit_dirty_var.set("● unsaved changes")
+        self._set_dirty(self._editing_pid, True)
 
     def _mods_edit(self):
         sel = self.mods_tree.selection()
@@ -997,14 +1282,14 @@ class AuthorTool(tk.Tk):
                 (label2 or "").strip(),
             ),
         )
-        self.edit_dirty_var.set("● unsaved changes")
+        self._set_dirty(self._editing_pid, True)
 
     def _mods_remove(self):
         sel = self.mods_tree.selection()
         if not sel:
             return
         self.mods_tree.delete(sel[0])
-        self.edit_dirty_var.set("● unsaved changes")
+        self._set_dirty(self._editing_pid, True)
 
     # -----------------------
     # Graph SVG viewer (spawn ui/graph_viewer.py as separate process)
@@ -1042,147 +1327,21 @@ class AuthorTool(tk.Tk):
 
     def _write_graph_viewer_html(self) -> None:
         """
-        Writes a tiny HTML wrapper that loads the SVG and provides Refresh/Reset.
-        The Refresh button calls pywebview js_api.refresh() in the viewer process.
+        Stage the HTML viewer file from <repo_root>/ui/viewer.html into the temp graph folder.
+
+        This keeps HTML/JS out of the Python source (easier to edit and less fragile).
+        The HTML must reference the SVG as a relative file named: graph.svg
         """
-        svg_url = "graph.svg"
+        template_path = os.path.join(REPO_ROOT, "ui", "viewer.html")
+        if not os.path.exists(template_path):
+            raise RuntimeError(
+                "Missing viewer template.\n\n"
+                f"Expected: {template_path}\n\n"
+                "Create it by copying viewer.html into <repo_root>/ui/."
+            )
 
-        html = f"""<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>LDW Graph Viewer</title>
-  <style>
-    body {{
-      margin: 0;
-      font-family: Segoe UI, Arial, sans-serif;
-      background: #111;
-      color: #eee;
-    }}
-    .bar {{
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      padding: 10px 12px;
-      background: #1b1b1b;
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      border-bottom: 1px solid #333;
-    }}
-    button {{
-      padding: 8px 12px;
-      border: 1px solid #444;
-      background: #2b2b2b;
-      color: #eee;
-      border-radius: 6px;
-      cursor: pointer;
-    }}
-    button:hover {{ background: #333; }}
-    .hint {{
-      margin-left: auto;
-      opacity: 0.75;
-      font-size: 12px;
-    }}
-    #stage {{
-      width: 100vw;
-      height: calc(100vh - 52px);
-      overflow: hidden;
-      background: #0f0f0f;
-    }}
-    object {{
-      width: 100%;
-      height: 100%;
-      display: block;
-      background: #0f0f0f;
-    }}
-  </style>
-</head>
-<body>
-  <div class="bar">
-    <button onclick="refreshGraph()">Refresh</button>
-    <button onclick="resetView()">Reset</button>
-    <button onclick="fitView()">Fit</button>
-    <div class="hint">Pan: drag • Zoom: mouse wheel / trackpad</div>
-  </div>
-
-  <div id="stage">
-    <object id="svgObj" type="image/svg+xml" data="{svg_url}?v=0"></object>
-  </div>
-
-  <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
-  <script>
-    let panZoom = null;
-
-    function getSvgDocument() {{
-      const obj = document.getElementById('svgObj');
-      return obj && obj.contentDocument ? obj.contentDocument : null;
-    }}
-
-    function installPanZoom() {{
-      try {{
-        const doc = getSvgDocument();
-        if (!doc) return;
-        const svg = doc.querySelector('svg');
-        if (!svg) return;
-
-        if (window.svgPanZoom) {{
-          if (panZoom) {{
-            try {{ panZoom.destroy(); }} catch(e) {{}}
-            panZoom = null;
-          }}
-          panZoom = svgPanZoom(svg, {{
-            zoomEnabled: true,
-            controlIconsEnabled: false,
-            fit: true,
-            center: true,
-            minZoom: 0.05,
-            maxZoom: 40
-          }});
-        }}
-      }} catch (e) {{}}
-    }}
-
-    function reloadSvgCacheBusted() {{
-      const obj = document.getElementById('svgObj');
-      const v = Date.now();
-      obj.setAttribute('data', '{svg_url}?v=' + v);
-    }}
-
-    function refreshGraph() {{
-      if (window.pywebview && window.pywebview.api && window.pywebview.api.refresh) {{
-        window.pywebview.api.refresh().then(() => {{
-          reloadSvgCacheBusted();
-        }});
-      }} else {{
-        reloadSvgCacheBusted();
-      }}
-    }}
-
-    function resetView() {{
-      if (panZoom) {{
-        panZoom.resetZoom();
-        panZoom.center();
-      }}
-    }}
-
-    function fitView() {{
-      if (panZoom) {{
-        panZoom.fit();
-        panZoom.center();
-      }}
-    }}
-
-    document.getElementById('svgObj').addEventListener('load', () => {{
-      installPanZoom();
-    }});
-  </script>
-</body>
-</html>
-"""
-        with open(self._graph_html_path, "w", encoding="utf-8") as f:
-            f.write(html)
+        # Copy template into the temp output directory where graph.svg lives
+        shutil.copy2(template_path, self._graph_html_path)
 
     def _locate_graph_viewer_script(self) -> str | None:
         """

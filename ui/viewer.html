@@ -1,0 +1,138 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>LDW Graph Viewer</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Segoe UI, Arial, sans-serif;
+      background: #111;
+      color: #eee;
+    }
+    .bar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 12px;
+      background: #1b1b1b;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid #333;
+    }
+    button {
+      padding: 8px 12px;
+      border: 1px solid #444;
+      background: #2b2b2b;
+      color: #eee;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:hover { background: #333; }
+    .hint {
+      margin-left: auto;
+      opacity: 0.75;
+      font-size: 12px;
+    }
+    #stage {
+      width: 100vw;
+      height: calc(100vh - 52px);
+      overflow: hidden;
+      background: #0f0f0f;
+    }
+    object {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #0f0f0f;
+    }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <button onclick="refreshGraph()">Refresh</button>
+    <button onclick="resetView()">Reset</button>
+    <button onclick="fitView()">Fit</button>
+    <div class="hint">Pan: drag • Zoom: mouse wheel / trackpad</div>
+  </div>
+
+  <div id="stage">
+    <object id="svgObj" type="image/svg+xml" data="graph.svg?v=0"></object>
+  </div>
+
+  <!-- NOTE: leaving CDN for now (offline mode postponed) -->
+  <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+  <script>
+    let panZoom = null;
+
+    function getSvgDocument() {
+      const obj = document.getElementById('svgObj');
+      return obj && obj.contentDocument ? obj.contentDocument : null;
+    }
+
+    function installPanZoom() {
+      try {
+        const doc = getSvgDocument();
+        if (!doc) return;
+        const svg = doc.querySelector('svg');
+        if (!svg) return;
+
+        if (window.svgPanZoom) {
+          if (panZoom) {
+            try { panZoom.destroy(); } catch(e) {}
+            panZoom = null;
+          }
+          panZoom = svgPanZoom(svg, {
+            zoomEnabled: true,
+            controlIconsEnabled: false,
+            fit: true,
+            center: true,
+            minZoom: 0.05,
+            maxZoom: 40
+          });
+        }
+      } catch (e) {}
+    }
+
+    function reloadSvgCacheBusted() {
+      const obj = document.getElementById('svgObj');
+      const v = Date.now();
+      obj.setAttribute('data', 'graph.svg?v=' + v);
+    }
+
+    async function refreshGraph() {
+      // Prefer pywebview JS API when available, else use HTTP endpoint (works in system browser)
+      try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.refresh) {
+          await window.pywebview.api.refresh();
+        } else {
+          await fetch('/api/refresh', { method: 'POST' });
+        }
+      } catch (e) {
+        // ignore
+      }
+      reloadSvgCacheBusted();
+    }
+
+    function resetView() {
+      if (panZoom) {
+        panZoom.resetZoom();
+        panZoom.center();
+      }
+    }
+
+    function fitView() {
+      if (panZoom) {
+        panZoom.fit();
+        panZoom.center();
+      }
+    }
+
+    document.getElementById('svgObj').addEventListener('load', () => {
+      installPanZoom();
+    });
+  </script>
+</body>
+</html>
