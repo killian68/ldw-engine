@@ -1,0 +1,6 @@
+win
+pyinstaller main.py --icon=lveh_icon_multires.ico
+linux
+pyinstaller main.py --icon=lveh_256.png
+macos
+pyinstaller main.py --icon=lveh_icon_macos.icns
